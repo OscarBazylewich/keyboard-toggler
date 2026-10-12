@@ -26,7 +26,12 @@ Get **`KeyboardToggler-Setup.exe`** from the [latest release](../../releases/lat
 | **Ctrl + Alt + Shift + K** (either keyboard) | Turn the laptop keyboard back on |
 | Right-click the tray icon | Status, start-with-Windows, detected keyboards, log folder, exit |
 
-The icon is a green keyboard when the laptop keyboard is on, and grey with a red slash when it's off.
+The tray icon shows the laptop keyboard's state:
+
+| <img src="docs/tray-on.png" width="48" alt="Green keyboard icon"> | <img src="docs/tray-off.png" width="48" alt="Grey keyboard icon with a red slash"> |
+|:---:|:---:|
+| Laptop keyboard **on** | Laptop keyboard **off** |
+
 On Windows 11, new tray icons start in the hidden overflow: click **^** next to the clock and drag
 the icon onto the taskbar to keep it visible.
 
