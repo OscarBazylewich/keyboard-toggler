@@ -1,0 +1,42 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify vendored Interception files
+        shell: pwsh
+        run: |
+          $expected = @{
+            'install-interception.exe'  = 'e137863a79da797f08e7a137280ff2a123809044a888fd75ce9c973198915abe'
+            'interception.dll'          = 'ab88164c11b1b48488772d4c3bfaa4509d5b0ae9dbc5a691dc4f96f0260443c8'
+            'Interception-LGPL-3.0.txt' = 'da7eabb7bafdf7d3ae5e9f223aa5bdc1eece45ac569dc21b3b037520b4464768'
+          }
+          foreach ($name in $expected.Keys) {
+            $hash = (Get-FileHash "vendor/$name" -Algorithm SHA256).Hash.ToLower()
+            if ($hash -ne $expected[$name]) { throw "$name hash mismatch: $hash" }
+          }
+
+      - name: Build installer
+        shell: cmd
+        run: build.cmd
+
+      - name: SHA-256
+        shell: pwsh
+        run: Get-FileHash dist/KeyboardToggler-Setup.exe -Algorithm SHA256 | Format-List
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: KeyboardToggler-Setup
+          path: dist/KeyboardToggler-Setup.exe

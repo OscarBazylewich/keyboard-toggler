@@ -1,0 +1,12 @@
+* text=auto
+
+# Windows batch files must keep CRLF line endings to run reliably
+*.cmd text eol=crlf
+
+# Third-party files are stored byte-for-byte so their published checksums stay valid
+vendor/* -text
+vendor/README.md text
+
+*.exe binary
+*.dll binary
+*.ico binary

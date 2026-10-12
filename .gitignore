@@ -1,0 +1,10 @@
+# Build output (rebuild with build.cmd; release binaries go on the GitHub Releases page)
+build/
+dist/
+
+# Editors / OS
+.vs/
+.vscode/
+*.user
+Thumbs.db
+desktop.ini
