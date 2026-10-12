@@ -51,32 +51,34 @@ namespace KeyboardToggler
             anyKeyboard = d => d >= 1 && d <= Ic.MaxKeyboard ? 1 : 0;
         }
 
-        public static bool IsBuiltInId(string hwid)
+        // Fallback for keyboards Windows can't describe: the classic PS/2 laptop keyboard IDs.
+        public static bool IsPs2KeyboardId(string hwid)
         {
             string s = hwid.ToUpperInvariant();
             return s.StartsWith("ACPI\\") || s.Contains("PNP0303") || s.Contains("MSFT0001");
         }
 
-        // Interception device number -> hardware IDs, for every keyboard slot in use.
+        // Interception device number -> first hardware ID (the same ID Windows lists for the device), for every keyboard slot in use.
         public Dictionary<int, string> Keyboards()
         {
             var result = new Dictionary<int, string>();
-            var buf = new byte[1024];
+            var buf = new byte[2048];
             for (int d = 1; d <= Ic.MaxKeyboard; d++)
             {
                 uint n = Ic.interception_get_hardware_id(ctx, d, buf, (uint)buf.Length);
                 if (n == 0 || n > buf.Length) continue;
-                result[d] = Encoding.Unicode.GetString(buf, 0, (int)n).Replace('\0', ' ').Trim();
+                result[d] = Encoding.Unicode.GetString(buf, 0, (int)n).Split('\0')[0];
             }
             return result;
         }
 
-        public int Start()
+        // Starts dropping keys from every keyboard whose hardware ID passes isTarget. Returns how many were found.
+        public int Start(Func<string, bool> isTarget)
         {
             if (running) return builtIn.Count;
             builtIn.Clear();
             foreach (var kv in Keyboards())
-                if (IsBuiltInId(kv.Value)) builtIn.Add(kv.Key);
+                if (isTarget(kv.Value)) builtIn.Add(kv.Key);
             if (builtIn.Count == 0) return 0;
             ctrl = alt = shift = false;
             running = true;

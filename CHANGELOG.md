@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.1.0 — 2026-10-12
+
+- Supports laptops whose built-in keyboard isn't PS/2: built-in keyboards are now found through
+  Windows' device containers, which also covers I2C and internal-USB keyboards. PS/2 IDs remain
+  as a fallback.
+- New **Laptop keyboard** tray submenu: lists connected keyboards by name, shows which are
+  switched off, and lets you tick/untick them (e.g. a separate Fn-key device). **Reset to automatic**
+  undoes manual choices.
+- External keyboards are now recognised by full hardware ID, so Bluetooth keyboards count too,
+  and a built-in HID keyboard can no longer be mistaken for an external one.
+- **Show detected keyboards** lists keyboards by name with their role.
+
 ## 2.0.3 — 2026-10-11
 
 First public release.

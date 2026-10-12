@@ -24,7 +24,7 @@ Get **`KeyboardToggler-Setup.exe`** from the [latest release](../../releases/lat
 | Left-click the tray icon | Switch the laptop keyboard off / on |
 | Click **Keep it off** in the prompt | Confirm. If you don't answer within 15 s, it turns back on |
 | **Ctrl + Alt + Shift + K** (either keyboard) | Turn the laptop keyboard back on |
-| Right-click the tray icon | Status, start-with-Windows, detected keyboards, log folder, exit |
+| Right-click the tray icon | Status, **Laptop keyboard** choice, start-with-Windows, detected keyboards, log folder, exit |
 
 The tray icon shows the laptop keyboard's state:
 
@@ -37,6 +37,11 @@ the icon onto the taskbar to keep it visible.
 
 Before switching off the first time, press any key on your external keyboard once. That's how
 the app learns which keyboard is your external one.
+
+The app finds the built-in keyboard by itself. To check or change which keyboards get switched off,
+right-click the tray icon and open **Laptop keyboard**: ticked keyboards are switched off together,
+and **Reset to automatic** undoes your changes. Some laptops have a second built-in keyboard device
+for the Fn/media keys; tick it too if those keys should stop working as well.
 
 ### Safety nets
 
@@ -51,8 +56,15 @@ It also refuses to switch off when no external keyboard is connected.
 
 ## How it works
 
-Many laptops connect the built-in keyboard as a **PS/2 keyboard** (`ACPI\MSFT0001`, `i8042prt`
-driver). Windows treats it as a critical system device, so it can't be switched off the usual ways:
+**Finding the built-in keyboard.** Windows groups devices into *containers*: everything built into
+the computer shares the computer's own container, while each plugged-in device (USB, Bluetooth,
+dock) gets its own. Keyboard Toggler treats keyboards in the computer's container as built in,
+which covers PS/2, I2C and internal-USB laptop keyboards alike. Keyboards Windows can't describe
+fall back to the classic PS/2 IDs, and you can override the choice from the tray menu.
+
+**Switching it off.** Many laptops connect the built-in keyboard as a **PS/2 keyboard**
+(`ACPI\MSFT0001`, `i8042prt` driver). Windows treats it as a critical system device, so it can't be
+switched off the usual ways:
 
 | Approach | Result on this kind of laptop |
 |---|---|
@@ -70,10 +82,11 @@ The app runs without admin rights. The installer needs admin rights once, to ins
 
 ## Compatibility
 
-- **Built-in keyboard:** the app looks for a PS/2-type built-in keyboard (`ACPI\…`, `PNP0303`,
-  `MSFT0001`). Some newer laptops connect the keyboard over I2C/HID instead. Those aren't recognised
-  yet, and the app will tell you it can't find the built-in keyboard (see
-  **Show detected keyboards**).
+- **Built-in keyboard:** PS/2, I2C and internal-USB laptop keyboards are detected automatically.
+  PS/2 has been tested on real hardware (ASUS TUF A16); I2C and internal-USB detection uses the same
+  Windows mechanism but hasn't been tested on such a laptop yet. If yours isn't found, tick it under
+  **Laptop keyboard** in the tray menu, and please
+  [open an issue](../../issues) with the output of **Show detected keyboards**.
 - **Anti-cheat:** some game anti-cheat systems dislike input filter drivers. Valorant (Riot
   Vanguard) launched fine in testing; a full match hasn't been tested. If a game complains,
   uninstall Keyboard Toggler.
@@ -100,7 +113,8 @@ The result is `dist\KeyboardToggler-Setup.exe`. Every push to `main` is also bui
 ```
 src/          the tray app (KeyboardToggler.exe)
   Interception.cs   driver P/Invoke + the Blocker that filters the built-in keyboard
-  TrayApp.cs        tray icon, menu, safety nets, startup setting, logging
+  Devices.cs        keyboard list from Windows' device tree (names, hardware IDs, built-in or not)
+  TrayApp.cs        tray icon, menu, safety nets, keyboard choice, startup setting, logging
   KeepOffPrompt.cs  the 15-second "Keep it off?" prompt
   Native.cs         Raw Input / hotkey Win32 calls
 setup/        the installer and uninstaller (one exe; the app files are embedded as resources)

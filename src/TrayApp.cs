@@ -54,21 +54,36 @@ namespace KeyboardToggler
     sealed class TrayApp : ApplicationContext
     {
         static readonly string LearnedFile = Path.Combine(Log.Dir, "external-keyboards.txt");
-        static readonly Regex VidPid = new Regex(@"VID_[0-9A-F]{4}&PID_[0-9A-F]{4}", RegexOptions.IgnoreCase);
+        // Per-keyboard overrides of the built-in detection: "+<hardware id>" = switch it off too, "-<hardware id>" = never.
+        static readonly string ChoiceFile = Path.Combine(Log.Dir, "laptop-keyboards.txt");
+        static readonly Regex Revision = new Regex(@"&REV_[^&\\]*", RegexOptions.IgnoreCase);
 
         readonly NotifyIcon tray = new NotifyIcon();
         readonly Icon iconOn = MakeIcon(false), iconOff = MakeIcon(true);
         readonly MsgWindow win;
         readonly System.Windows.Forms.Timer poll = new System.Windows.Forms.Timer { Interval = 2000 };
         readonly HashSet<string> learned = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        readonly HashSet<string> forceOn = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        readonly HashSet<string> forceOff = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        readonly Dictionary<string, KeyboardDevice> rawDevices = new Dictionary<string, KeyboardDevice>(StringComparer.OrdinalIgnoreCase);
         Blocker blocker;
         KeepOffPrompt prompt;
-        ToolStripMenuItem statusItem, toggleItem, startupItem;
+        ToolStripMenuItem statusItem, toggleItem, startupItem, laptopItem;
 
         public TrayApp()
         {
             Log.Write("started");
             try { foreach (var l in File.ReadAllLines(LearnedFile)) if (l.Trim() != "") learned.Add(l.Trim()); } catch { }
+            try
+            {
+                foreach (var l in File.ReadAllLines(ChoiceFile))
+                {
+                    string s = l.Trim();
+                    if (s.Length < 2) continue;
+                    if (s[0] == '+') forceOn.Add(s.Substring(1)); else if (s[0] == '-') forceOff.Add(s.Substring(1));
+                }
+            }
+            catch { }
 
             try { blocker = new Blocker(); blocker.EmergencyCombo += () => win.BeginInvoke((Action)(() => TurnOn("Ctrl+Alt+Shift+K"))); }
             catch (Exception ex) { Log.Write("blocker unavailable: " + ex.Message); blocker = null; }
@@ -82,12 +97,15 @@ namespace KeyboardToggler
             menu.Items.Add(statusItem);
             menu.Items.Add(toggleItem);
             menu.Items.Add(new ToolStripSeparator());
+            laptopItem = new ToolStripMenuItem("Laptop keyboard");
+            laptopItem.DropDownItems.Add("(loading)");
+            menu.Items.Add(laptopItem);
             menu.Items.Add(startupItem);
             menu.Items.Add("Show detected keyboards", null, (s, e) => ShowKeyboards());
             menu.Items.Add("Open log folder", null, (s, e) => { Directory.CreateDirectory(Log.Dir); Process.Start("explorer.exe", Log.Dir); });
             menu.Items.Add(new ToolStripSeparator());
             menu.Items.Add("Exit", null, (s, e) => ExitThread());
-            menu.Opening += (s, e) => startupItem.Checked = IsStartup();
+            menu.Opening += (s, e) => { startupItem.Checked = IsStartup(); FillLaptopMenu(); };
 
             tray.ContextMenuStrip = menu;
             tray.MouseClick += (s, e) => { if (e.Button == MouseButtons.Left) Toggle(); };
@@ -100,7 +118,7 @@ namespace KeyboardToggler
 
             if (blocker == null)
                 Balloon("Interception driver not found",
-                    "Keyboard Toggler needs the Interception driver. Run install.cmd as administrator and restart Windows.", ToolTipIcon.Error);
+                    "Keyboard Toggler needs the Interception driver. Reinstall Keyboard Toggler and restart Windows.", ToolTipIcon.Error);
         }
 
         bool Off { get { return blocker != null && blocker.Blocking; } }
@@ -112,7 +130,7 @@ namespace KeyboardToggler
             if (blocker == null)
             {
                 MessageBox.Show("The Interception driver isn't available, so the laptop keyboard can't be switched off.\n\n" +
-                    "Run install.cmd as administrator, then restart Windows.", "Keyboard Toggler", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    "Reinstall Keyboard Toggler, then restart Windows.", "Keyboard Toggler", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
             if (!ExternalPresent())
@@ -124,12 +142,14 @@ namespace KeyboardToggler
                 return;
             }
             int n;
-            try { n = blocker.Start(); }
+            try { n = blocker.Start(IsTarget); }
             catch (Exception ex) { Log.Write("start failed: " + ex); MessageBox.Show("Couldn't switch off the laptop keyboard:\n" + ex.Message, "Keyboard Toggler"); return; }
             if (n == 0)
             {
-                Log.Write("no built-in keyboard among: " + string.Join(" | ", blocker.Keyboards().Values));
-                MessageBox.Show("Couldn't find the built-in keyboard through the Interception driver.\nUse \"Show detected keyboards\" and send me the list.", "Keyboard Toggler");
+                Log.Write("no laptop keyboard among: " + string.Join(" | ", blocker.Keyboards().Values));
+                MessageBox.Show("Couldn't find the laptop's built-in keyboard.\n\n" +
+                    "Right-click the tray icon, open \"Laptop keyboard\" and tick your laptop's keyboard, then try again.",
+                    "Keyboard Toggler", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
             Log.Write("laptop keyboard OFF");
@@ -171,50 +191,147 @@ namespace KeyboardToggler
             tray.ShowBalloonTip(5000);
         }
 
+        // ---- which keyboards are "the laptop keyboard" ----
+
+        // Built in = Windows places it in the computer's own container (PS/2, I2C and internal-USB keyboards alike).
+        // Keyboards Windows can't describe fall back to the classic PS/2 IDs.
+        static bool AutoBuiltIn(string hardwareId, List<KeyboardDevice> present)
+        {
+            bool known = false;
+            foreach (var d in present)
+                if (string.Equals(d.HardwareId, hardwareId, StringComparison.OrdinalIgnoreCase))
+                {
+                    if (d.Internal) return true;
+                    known = true;
+                }
+            return !known && Blocker.IsPs2KeyboardId(hardwareId);
+        }
+
+        bool IsTarget(string hardwareId, List<KeyboardDevice> present)
+        {
+            if (forceOn.Contains(hardwareId)) return true;
+            if (forceOff.Contains(hardwareId)) return false;
+            return AutoBuiltIn(hardwareId, present);
+        }
+
+        bool IsTarget(string hardwareId) { return IsTarget(hardwareId, Devices.PresentKeyboards()); }
+
+        void SetTarget(string hardwareId, bool on)
+        {
+            forceOn.Remove(hardwareId); forceOff.Remove(hardwareId);
+            if (on != AutoBuiltIn(hardwareId, Devices.PresentKeyboards())) (on ? forceOn : forceOff).Add(hardwareId);
+            try
+            {
+                Directory.CreateDirectory(Log.Dir);
+                File.WriteAllLines(ChoiceFile, forceOn.Select(h => "+" + h).Concat(forceOff.Select(h => "-" + h)).ToArray());
+            }
+            catch (Exception ex) { Log.Write("saving keyboard choice: " + ex.Message); }
+            Log.Write((on ? "switch off with laptop keyboard: " : "never switch off: ") + hardwareId);
+            rawDevices.Clear();
+
+            if (Off)
+            {
+                // Apply right away: re-filter with the new choice, or turn back on if nothing is left to block.
+                blocker.Stop();
+                if (blocker.Start(IsTarget) == 0)
+                {
+                    Log.Write("laptop keyboard ON (no keyboard selected)");
+                    if (prompt != null) { var p = prompt; prompt = null; p.Kept = true; p.Close(); }
+                    UpdateUi();
+                }
+                else CheckExternal();
+            }
+        }
+
+        void FillLaptopMenu()
+        {
+            laptopItem.DropDownItems.Clear();
+            laptopItem.DropDownItems.Add(new ToolStripMenuItem("Keyboards to switch off:") { Enabled = false });
+            var present = Devices.PresentKeyboards();
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var d in present.OrderBy(d => d.Internal ? 0 : 1).ThenBy(d => d.Name))
+            {
+                if (!seen.Add(d.HardwareId)) continue;
+                string id = d.HardwareId;
+                var item = new ToolStripMenuItem(d.Name + (d.Internal ? "  (built in)" : "") + "   " + Revision.Replace(id, ""));
+                item.Checked = IsTarget(id, present);
+                item.Click += (s, e) => SetTarget(id, !item.Checked);
+                laptopItem.DropDownItems.Add(item);
+            }
+            if (forceOn.Count + forceOff.Count > 0)
+            {
+                laptopItem.DropDownItems.Add(new ToolStripSeparator());
+                laptopItem.DropDownItems.Add("Reset to automatic", null, (s, e) =>
+                {
+                    foreach (var h in forceOn.Concat(forceOff).ToList()) SetTarget(h, AutoBuiltIn(h, Devices.PresentKeyboards()));
+                });
+            }
+        }
+
         // ---- external keyboard tracking ----
 
-        // Called for every raw keystroke; remembers which non-built-in keyboards are actually used for typing.
+        // Keyboards are remembered by hardware ID without the firmware revision, so a firmware update doesn't forget them.
+        static string LearnKey(string hardwareId) { return Revision.Replace(hardwareId, "").ToUpperInvariant(); }
+
+        // Learned entries from 2.0.x are just "VID_xxxx&PID_yyyy"; they still match by containment.
+        bool IsLearned(string hardwareId)
+        {
+            string key = LearnKey(hardwareId);
+            foreach (string l in learned)
+                if (key == l.ToUpperInvariant() || key.Contains(l.ToUpperInvariant())) return true;
+            return false;
+        }
+
+        // Called for every raw keystroke; remembers which non-laptop keyboards are actually used for typing.
         internal void OnRawKey(string deviceName)
         {
-            if (Blocker.IsBuiltInId(deviceName.Replace('#', '\\').TrimStart('\\', '?'))) return;
-            var m = VidPid.Match(deviceName);
-            if (!m.Success) return;
-            string id = m.Value.ToUpperInvariant();
-            if (learned.Add(id))
+            // Cached per device, so a keystroke doesn't rescan the device tree; cleared on device changes.
+            KeyboardDevice d;
+            if (!rawDevices.TryGetValue(deviceName, out d))
             {
-                Log.Write("learned external keyboard " + id);
+                d = Devices.Describe(Devices.InstanceIdFromInterfacePath(deviceName));
+                if (d != null && IsTarget(d.HardwareId)) d = null;
+                rawDevices[deviceName] = d;
+            }
+            if (d == null) return;
+            if (!IsLearned(d.HardwareId) && learned.Add(LearnKey(d.HardwareId)))
+            {
+                Log.Write("learned external keyboard " + LearnKey(d.HardwareId) + " (" + d.Name + ")");
                 try { Directory.CreateDirectory(Log.Dir); File.WriteAllLines(LearnedFile, learned.ToArray()); } catch { }
             }
         }
 
-        static HashSet<string> PresentKeyboards()
+        // An external keyboard you've typed on is connected (and isn't one of the keyboards being switched off).
+        bool ExternalPresent()
         {
-            var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (string name in Native.KeyboardDeviceNames())
-            {
-                var m = VidPid.Match(name);
-                if (m.Success) set.Add(m.Value.ToUpperInvariant());
-            }
-            return set;
+            var present = Devices.PresentKeyboards();
+            return present.Any(d => !IsTarget(d.HardwareId, present) && IsLearned(d.HardwareId));
         }
-
-        bool ExternalPresent() { return learned.Overlaps(PresentKeyboards()); }
 
         internal void CheckExternal()
         {
             if (Off && !ExternalPresent()) TurnOn("external keyboard disconnected");
         }
 
+        internal void OnDeviceChange()
+        {
+            rawDevices.Clear();
+            CheckExternal();
+        }
+
         void ShowKeyboards()
         {
+            var present = Devices.PresentKeyboards();
             var sb = new StringBuilder();
-            sb.AppendLine("Through Interception driver:");
-            if (blocker == null) sb.AppendLine("  (driver not available)");
-            else foreach (var kv in blocker.Keyboards())
-                sb.AppendLine("  #" + kv.Key + (Blocker.IsBuiltInId(kv.Value) ? "  [BUILT-IN]  " : "  ") + kv.Value);
+            sb.AppendLine("Connected keyboards:");
+            foreach (var d in present)
+                sb.AppendLine(string.Format("  {0} {1}{2}\n      {3}",
+                    IsTarget(d.HardwareId, present) ? "[laptop keyboard]" : IsLearned(d.HardwareId) ? "[external, typed on]" : "[external]",
+                    d.Name, d.Internal ? " (built in)" : "", d.HardwareId));
             sb.AppendLine();
-            sb.AppendLine("External keyboards you've typed on: " + (learned.Count == 0 ? "(none yet)" : string.Join(", ", learned)));
-            sb.AppendLine("Currently connected: " + string.Join(", ", PresentKeyboards()));
+            sb.AppendLine("Through the Interception driver:");
+            if (blocker == null) sb.AppendLine("  (driver not available)");
+            else foreach (var kv in blocker.Keyboards()) sb.AppendLine("  #" + kv.Key + "  " + kv.Value);
             Log.Write(sb.ToString());
             MessageBox.Show(sb.ToString(), "Keyboard Toggler - keyboards");
         }
@@ -335,7 +452,7 @@ namespace KeyboardToggler
                     Run(() => app.TurnOn("Ctrl+Alt+Shift+K"));
                     break;
                 case 0x0219: // WM_DEVICECHANGE
-                    app.CheckExternal();
+                    app.OnDeviceChange();
                     break;
                 case 0x8001:
                     for (;;)
