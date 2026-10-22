@@ -7,6 +7,10 @@ touchpad and mouse keep working the whole time.
 
 Built for and tested on an ASUS TUF A16 (FA607PV) with Windows 11.
 
+<p align="center">
+  <img src="docs/images/demo.gif" width="600" alt="Pressing Ctrl + Alt + Shift + K switches the laptop keyboard off: the tray icon turns grey with a red slash and a Keep it off prompt appears. Pressing it again switches the keyboard back on.">
+</p>
+
 | <img src="docs/images/tray-on.png" width="48" alt="Green keyboard icon"> | <img src="docs/images/tray-off.png" width="48" alt="Grey keyboard icon with a red slash"> |
 |:---:|:---:|
 | Laptop keyboard **on** | Laptop keyboard **off** |
