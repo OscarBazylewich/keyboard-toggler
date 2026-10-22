@@ -23,8 +23,8 @@ Get **`KeyboardToggler-Setup.exe`** from the [latest release](../../releases/lat
 |---|---|
 | Left-click the tray icon | Switch the laptop keyboard off / on |
 | Click **Keep it off** in the prompt | Confirm. If you don't answer within 15 s, it turns back on |
-| **Ctrl + Alt + Shift + K** (either keyboard) | Turn the laptop keyboard back on |
-| Right-click the tray icon | Status, **Laptop keyboard** choice, start-with-Windows, detected keyboards, log folder, exit |
+| **Ctrl + Alt + Shift + K** (default shortcut) | Switch the laptop keyboard off / on |
+| Right-click the tray icon | Status, **Laptop keyboard** choice, **Change shortcut**, start-with-Windows, detected keyboards, log folder, exit |
 
 The tray icon shows the laptop keyboard's state:
 
@@ -38,6 +38,10 @@ the icon onto the taskbar to keep it visible.
 Before switching off the first time, press any key on your external keyboard once. That's how
 the app learns which keyboard is your external one.
 
+To use a different shortcut, right-click the tray icon, choose **Change shortcut…** and press the
+combination you want. It needs Ctrl, Alt or Win plus another key, and the app won't accept one that
+Windows or another app already uses. **Reset to default** brings back Ctrl + Alt + Shift + K.
+
 The app finds the built-in keyboard by itself. To check or change which keyboards get switched off,
 right-click the tray icon and open **Laptop keyboard**: ticked keyboards are switched off together,
 and **Reset to automatic** undoes your changes. Some laptops have a second built-in keyboard device
@@ -49,7 +53,7 @@ The laptop keyboard comes back on automatically when:
 
 - you don't confirm **Keep it off** within 15 seconds,
 - your external keyboard is unplugged,
-- you press **Ctrl + Alt + Shift + K**,
+- you press the shortcut, on any keyboard (including the switched-off laptop keyboard),
 - the app exits, crashes or is killed, or you sign out or restart.
 
 It also refuses to switch off when no external keyboard is connected.
@@ -114,6 +118,8 @@ The result is `dist\KeyboardToggler-Setup.exe`. Every push to `main` is also bui
 src/          the tray app (KeyboardToggler.exe)
   Interception.cs   driver P/Invoke + the Blocker that filters the built-in keyboard
   Devices.cs        keyboard list from Windows' device tree (names, hardware IDs, built-in or not)
+  Hotkey.cs         the toggle shortcut: storage, display names, scan codes
+  ShortcutDialog.cs the "Change shortcut" window
   TrayApp.cs        tray icon, menu, safety nets, keyboard choice, startup setting, logging
   KeepOffPrompt.cs  the 15-second "Keep it off?" prompt
   Native.cs         Raw Input / hotkey Win32 calls

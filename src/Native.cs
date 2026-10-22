@@ -13,6 +13,7 @@ namespace KeyboardToggler
         [DllImport("user32.dll")] static extern uint GetRawInputData(IntPtr h, uint cmd, out RAWINPUTHEADER data, ref uint size, uint hsize);
         [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern uint GetRawInputDeviceInfo(IntPtr dev, uint cmd, StringBuilder data, ref uint size);
         [DllImport("user32.dll")] public static extern bool RegisterHotKey(IntPtr hwnd, int id, uint mods, uint vk);
+        [DllImport("user32.dll")] public static extern bool UnregisterHotKey(IntPtr hwnd, int id);
         [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr hwnd, int msg, IntPtr w, IntPtr l);
         [DllImport("user32.dll")] public static extern bool DestroyIcon(IntPtr h);
 

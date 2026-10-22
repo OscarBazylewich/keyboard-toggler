@@ -68,7 +68,8 @@ namespace KeyboardToggler
         readonly Dictionary<string, KeyboardDevice> rawDevices = new Dictionary<string, KeyboardDevice>(StringComparer.OrdinalIgnoreCase);
         Blocker blocker;
         KeepOffPrompt prompt;
-        ToolStripMenuItem statusItem, toggleItem, startupItem, laptopItem;
+        ToolStripMenuItem statusItem, toggleItem, startupItem, laptopItem, shortcutItem;
+        Hotkey shortcut = Hotkey.Load();
 
         public TrayApp()
         {
@@ -85,10 +86,16 @@ namespace KeyboardToggler
             }
             catch { }
 
-            try { blocker = new Blocker(); blocker.EmergencyCombo += () => win.BeginInvoke((Action)(() => TurnOn("Ctrl+Alt+Shift+K"))); }
+            try
+            {
+                blocker = new Blocker { Hotkey = shortcut };
+                blocker.HotkeyPressed += () => win.BeginInvoke((Action)(() => TurnOn("shortcut")));
+            }
             catch (Exception ex) { Log.Write("blocker unavailable: " + ex.Message); blocker = null; }
 
             win = new MsgWindow(this);
+            bool shortcutOk = win.RegisterShortcut(shortcut);
+            if (!shortcutOk) Log.Write("shortcut " + shortcut + " is taken by another app");
 
             var menu = new ContextMenuStrip();
             statusItem = new ToolStripMenuItem { Enabled = false };
@@ -100,6 +107,8 @@ namespace KeyboardToggler
             laptopItem = new ToolStripMenuItem("Laptop keyboard");
             laptopItem.DropDownItems.Add("(loading)");
             menu.Items.Add(laptopItem);
+            shortcutItem = new ToolStripMenuItem("", null, (s, e) => ChangeShortcut());
+            menu.Items.Add(shortcutItem);
             menu.Items.Add(startupItem);
             menu.Items.Add("Show detected keyboards", null, (s, e) => ShowKeyboards());
             menu.Items.Add("Open log folder", null, (s, e) => { Directory.CreateDirectory(Log.Dir); Process.Start("explorer.exe", Log.Dir); });
@@ -116,6 +125,9 @@ namespace KeyboardToggler
             poll.Start();
             SystemEvents.SessionEnding += (s, e) => TurnOn("sign-out/shutdown");
 
+            if (blocker != null && !shortcutOk)
+                Balloon("Shortcut unavailable",
+                    shortcut + " is already used by another app. Right-click the tray icon and choose \"Change shortcut\".", ToolTipIcon.Warning);
             if (blocker == null)
                 Balloon("Interception driver not found",
                     "Keyboard Toggler needs the Interception driver. Reinstall Keyboard Toggler and restart Windows.", ToolTipIcon.Error);
@@ -124,6 +136,26 @@ namespace KeyboardToggler
         bool Off { get { return blocker != null && blocker.Blocking; } }
 
         void Toggle() { if (Off) TurnOn("tray click"); else TurnOff(); }
+
+        // The toggle shortcut, typed on a keyboard that isn't blocked (the blocked one only ever turns back on).
+        internal void OnShortcut() { if (Off) TurnOn("shortcut"); else TurnOff(); }
+
+        void ChangeShortcut()
+        {
+            win.UnregisterShortcut(); // so pressing the current shortcut in the dialog doesn't toggle
+            using (var dlg = new ShortcutDialog(shortcut, win.RegisterShortcut))
+            {
+                if (dlg.ShowDialog() == DialogResult.OK && dlg.Result != null)
+                {
+                    shortcut = dlg.Result;
+                    if (blocker != null) blocker.Hotkey = shortcut;
+                    try { shortcut.Save(); } catch (Exception ex) { Log.Write("saving shortcut: " + ex.Message); }
+                    Log.Write("shortcut set to " + shortcut);
+                }
+                else if (!win.RegisterShortcut(shortcut)) Log.Write("shortcut " + shortcut + " is taken by another app");
+            }
+            UpdateUi();
+        }
 
         void TurnOff()
         {
@@ -172,7 +204,7 @@ namespace KeyboardToggler
             Log.Write("laptop keyboard ON (" + why + ")");
             if (prompt != null) { var p = prompt; prompt = null; p.Kept = true; p.Close(); }
             UpdateUi();
-            if (why != "tray click" && why != "chose turn back on" && why != "app exit")
+            if (why != "tray click" && why != "chose turn back on" && why != "app exit" && why != "shortcut")
                 Balloon("Laptop keyboard is back on", "Reason: " + why, ToolTipIcon.Info);
         }
 
@@ -182,7 +214,9 @@ namespace KeyboardToggler
             tray.Icon = off ? iconOff : iconOn;
             tray.Text = off ? "Laptop keyboard: OFF (click to turn on)" : "Laptop keyboard: ON (click to turn off)";
             statusItem.Text = blocker == null ? "Interception driver not available" : off ? "Laptop keyboard is OFF" : "Laptop keyboard is ON";
-            toggleItem.Text = off ? "Turn laptop keyboard on" : "Turn laptop keyboard off";
+            toggleItem.Text = (off ? "Turn laptop keyboard on" : "Turn laptop keyboard off");
+            toggleItem.ShortcutKeyDisplayString = shortcut.ToString();
+            shortcutItem.Text = "Change shortcut...";
         }
 
         void Balloon(string title, string text, ToolTipIcon icon)
@@ -414,7 +448,7 @@ namespace KeyboardToggler
     }
 
     // Hidden window: raw keyboard input (to learn external keyboards), device-change notices, and the
-    // Ctrl+Alt+Shift+K hotkey for the external keyboard.
+    // toggle shortcut as a system-wide hotkey (the keyboards that aren't being blocked).
     sealed class MsgWindow : NativeWindow
     {
         readonly TrayApp app;
@@ -424,8 +458,16 @@ namespace KeyboardToggler
             CreateHandle(new CreateParams { Caption = "KeyboardTogglerMsg" });
             var d = new[] { new Native.RAWINPUTDEVICE { UsagePage = 1, Usage = 6, Flags = 0x100 /*INPUTSINK*/, Target = Handle } };
             if (!Native.RegisterRawInputDevices(d, 1, (uint)Marshal.SizeOf(typeof(Native.RAWINPUTDEVICE)))) Log.Write("raw input registration failed");
-            if (!Native.RegisterHotKey(Handle, 1, 0x1 | 0x2 | 0x4 | 0x4000 /*ALT|CTRL|SHIFT|NOREPEAT*/, (uint)Keys.K)) Log.Write("hotkey registration failed");
         }
+
+        // Replaces the registered shortcut; false if Windows or another app already owns that combination.
+        public bool RegisterShortcut(Hotkey h)
+        {
+            Native.UnregisterHotKey(Handle, 1);
+            return h != null && Native.RegisterHotKey(Handle, 1, h.Mods | 0x4000 /*MOD_NOREPEAT*/, h.Vk);
+        }
+
+        public void UnregisterShortcut() { Native.UnregisterHotKey(Handle, 1); }
 
         readonly Queue<Action> pending = new Queue<Action>();
 
@@ -449,7 +491,7 @@ namespace KeyboardToggler
                     catch (Exception ex) { Log.Write("raw input: " + ex.Message); }
                     break;
                 case 0x0312: // WM_HOTKEY
-                    Run(() => app.TurnOn("Ctrl+Alt+Shift+K"));
+                    Run(() => app.OnShortcut());
                     break;
                 case 0x0219: // WM_DEVICECHANGE
                     app.OnDeviceChange();

@@ -13,14 +13,14 @@ using Microsoft.Win32;
 
 [assembly: AssemblyTitle("Keyboard Toggler Setup")]
 [assembly: AssemblyProduct("Keyboard Toggler")]
-[assembly: AssemblyVersion("2.1.0.0")]
-[assembly: AssemblyFileVersion("2.1.0.0")]
+[assembly: AssemblyVersion("2.2.0.0")]
+[assembly: AssemblyFileVersion("2.2.0.0")]
 
 namespace KeyboardTogglerSetup
 {
     static class Setup
     {
-        public const string AppName = "Keyboard Toggler", Version = "2.1.0";
+        public const string AppName = "Keyboard Toggler", Version = "2.2.0";
         public const string UninstallKey = @"Software\Microsoft\Windows\CurrentVersion\Uninstall\KeyboardToggler";
         public const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
         public static readonly string Dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "KeyboardToggler");

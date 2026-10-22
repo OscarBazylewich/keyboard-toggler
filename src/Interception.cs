@@ -37,10 +37,12 @@ namespace KeyboardToggler
         volatile bool running;
         readonly HashSet<int> builtIn = new HashSet<int>();
         readonly Ic.Predicate isBuiltIn, anyKeyboard;
-        bool ctrl, alt, shift;
+        bool ctrl, alt, shift, win;
+        volatile Hotkey hotkey = Hotkey.Default;
 
-        public event Action EmergencyCombo;   // Ctrl+Alt+Shift+K pressed on the built-in keyboard (raised on a worker thread)
+        public event Action HotkeyPressed;   // the toggle shortcut typed on a blocked keyboard (raised on a worker thread)
         public bool Blocking { get { return running; } }
+        public Hotkey Hotkey { set { hotkey = value; } }
 
         public Blocker()
         {
@@ -80,7 +82,7 @@ namespace KeyboardToggler
             foreach (var kv in Keyboards())
                 if (isTarget(kv.Value)) builtIn.Add(kv.Key);
             if (builtIn.Count == 0) return 0;
-            ctrl = alt = shift = false;
+            ctrl = alt = shift = win = false;
             running = true;
             Ic.interception_set_filter(ctx, isBuiltIn, Ic.FilterAll);
             thread = new Thread(Loop) { IsBackground = true, Name = "Blocker", Priority = ThreadPriority.AboveNormal };
@@ -106,21 +108,23 @@ namespace KeyboardToggler
                 if (dev <= 0 || Ic.interception_receive(ctx, dev, stroke, 1) <= 0) continue;
                 if (!running || !builtIn.Contains(dev)) { Ic.interception_send(ctx, dev, stroke, 1); continue; }
 
-                // Swallow the key, but still watch for the emergency combo.
+                // Swallow the key, but still watch for the toggle shortcut so this keyboard can always switch itself back on.
                 ushort code = BitConverter.ToUInt16(stroke, 0), state = BitConverter.ToUInt16(stroke, 2);
-                bool down = (state & Ic.KeyUp) == 0;
-                switch (code)
+                bool down = (state & Ic.KeyUp) == 0, e0 = (state & Ic.KeyE0) != 0;
+                if (code == 0x1D) ctrl = down;
+                else if (code == 0x38) alt = down;
+                else if (code == 0x2A || code == 0x36) shift = down;
+                else if (e0 && (code == 0x5B || code == 0x5C)) win = down;
+                else if (down)
                 {
-                    case 0x1D: ctrl = down; break;
-                    case 0x38: alt = down; break;
-                    case 0x2A: case 0x36: shift = down; break;
-                    case 0x25:
-                        if (down && ctrl && alt && shift)
-                        {
-                            var h = EmergencyCombo;
-                            if (h != null) ThreadPool.QueueUserWorkItem(_ => h());
-                        }
-                        break;
+                    var hk = hotkey;
+                    if (code == hk.ScanCode && e0 == hk.Extended
+                        && ctrl == ((hk.Mods & Hotkey.Ctrl) != 0) && alt == ((hk.Mods & Hotkey.Alt) != 0)
+                        && shift == ((hk.Mods & Hotkey.Shift) != 0) && win == ((hk.Mods & Hotkey.Win) != 0))
+                    {
+                        var h = HotkeyPressed;
+                        if (h != null) ThreadPool.QueueUserWorkItem(_ => h());
+                    }
                 }
             }
         }

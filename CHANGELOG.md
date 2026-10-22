@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.2.0 — 2026-10-21
+
+- **Custom shortcut.** Right-click the tray icon → **Change shortcut…** and press the combination you
+  want (Ctrl, Alt or Win plus a key). Combinations already taken by Windows or another app are
+  refused; **Reset to default** restores Ctrl + Alt + Shift + K.
+- The shortcut now **toggles** the laptop keyboard off and on (it used to only turn it back on).
+  While the laptop keyboard is off, typing the shortcut on it still turns it back on.
+- The tray menu shows the current shortcut next to "Turn laptop keyboard off/on".
+
 ## 2.1.0 — 2026-10-12
 
 - Supports laptops whose built-in keyboard isn't PS/2: built-in keyboards are now found through
