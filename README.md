@@ -20,7 +20,8 @@ Built for and tested on an ASUS TUF A16 (FA607PV) with Windows 11.
 1. Download **`KeyboardToggler-Setup.exe`** from the [latest release](../../releases/latest) and run it.
 2. **Restart once** after the first install so Windows loads the keyboard driver.
 
-- Works on Windows 10 or 11, 64-bit. Nothing else to install.
+- Works on Windows 10 or 11 on 64-bit Intel or AMD PCs. Not on Windows on Arm, because the keyboard
+  driver doesn't exist for it. Nothing else to install.
 - The installer isn't code-signed, so Windows may show *"Windows protected your PC"*.
   Click **More info → Run anyway**. You can check the download against the SHA-256 in the release notes.
 - Updating from an older 2.x version keeps your settings and doesn't need a restart.

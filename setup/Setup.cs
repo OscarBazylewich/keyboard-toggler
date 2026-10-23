@@ -7,6 +7,7 @@ using System.Drawing;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Threading;
 using System.Windows.Forms;
 using Microsoft.Win32;
@@ -27,6 +28,29 @@ namespace KeyboardTogglerSetup
         public static readonly string AppExe = Path.Combine(Dir, "KeyboardToggler.exe");
         public static readonly string Shortcut = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonPrograms), "Keyboard Toggler.lnk");
         static readonly string[] Payload = { "KeyboardToggler.exe", "interception.dll", "install-interception.exe", "Interception-LGPL-3.0.txt" };
+
+        public const string ArmMessage = "Keyboard Toggler can't be installed on Windows on Arm.\n\n" +
+            "The keyboard driver it relies on (Interception) only exists for Intel and AMD (x64) PCs. It can't load on this PC, " +
+            "so after the restart every keyboard and mouse would stop working.";
+
+        [DllImport("kernel32.dll")] static extern IntPtr GetCurrentProcess();
+        [DllImport("kernel32.dll")] static extern bool IsWow64Process2(IntPtr process, out ushort processMachine, out ushort nativeMachine);
+
+        // Windows on Arm runs this x64 setup emulated, and the driver's installer would then register its x64 keyboard and
+        // mouse filters, which an Arm64 Windows can't load.
+        public static bool IsArm64()
+        {
+            try
+            {
+                ushort process, native;
+                return IsWow64Process2(GetCurrentProcess(), out process, out native) && native == 0xAA64; // IMAGE_FILE_MACHINE_ARM64
+            }
+            catch (EntryPointNotFoundException) { return false; }   // Windows 10 before 1709, which can't run x64 apps on Arm anyway
+        }
+
+        // Windows tools are started by full path: given a bare name, Windows looks in the setup's own folder
+        // (e.g. Downloads) first, so a planted schtasks.exe there would run with admin rights.
+        public static string SystemTool(string name) { return Path.Combine(Environment.SystemDirectory, name); }
 
         [STAThread]
         static void Main(string[] args)
@@ -64,6 +88,8 @@ namespace KeyboardTogglerSetup
         // Returns true when Windows must restart before the driver is active.
         public static bool Install(bool startWithWindows, Action<string> progress)
         {
+            if (IsArm64()) throw new Exception(ArmMessage);
+
             progress("Closing Keyboard Toggler if it's running...");
             StopApp();
 
@@ -130,7 +156,7 @@ namespace KeyboardTogglerSetup
                 ok.SetValue("KeyboardToggler", state, RegistryValueKind.Binary);
         }
 
-        public static void DeleteLogonTask() { string o; RunHidden("schtasks.exe", "/delete /f /tn KeyboardToggler", out o); }
+        public static void DeleteLogonTask() { string o; RunHidden(SystemTool("schtasks.exe"), "/delete /f /tn KeyboardToggler", out o); }
 
         // v1.x (NSIS, device-disable) left: two scheduled tasks, ProgramData state/logs, extra files and shortcuts.
         // If v1 ever left a keyboard disabled, its state file lists it; switch those back on first.
@@ -143,12 +169,12 @@ namespace KeyboardTogglerSetup
                 string state = File.ReadAllText(Path.Combine(data, "state.json"));
                 var ids = System.Text.RegularExpressions.Regex.Match(state, @"""DisabledIds""\s*:\s*\[(.*?)\]", System.Text.RegularExpressions.RegexOptions.Singleline);
                 foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(ids.Groups[1].Value, @"""((?:[^""\\]|\\.)*)"""))
-                    RunHidden("pnputil.exe", "/enable-device \"" + m.Groups[1].Value.Replace(@"\\", @"\") + "\"", out o);
+                    RunHidden(SystemTool("pnputil.exe"), "/enable-device \"" + m.Groups[1].Value.Replace(@"\\", @"\") + "\"", out o);
             }
             catch { }
 
             DeleteLogonTask(); // v1's elevated sign-in task had the same name
-            RunHidden("schtasks.exe", "/delete /f /tn \"KeyboardToggler Restore\"", out o);
+            RunHidden(SystemTool("schtasks.exe"), "/delete /f /tn \"KeyboardToggler Restore\"", out o);
             try { Directory.Delete(data, true); } catch { }
             foreach (string f in new[] { "Restore-Keyboard.cmd", "tasks.ps1" })
                 try { File.Delete(Path.Combine(Dir, f)); } catch { }
@@ -182,9 +208,12 @@ namespace KeyboardTogglerSetup
         }
 
         // Start the app as the signed-in user (not elevated): explorer.exe launches it with normal rights.
-        public static void LaunchApp() { Process.Start("explorer.exe", "\"" + AppExe + "\""); }
+        public static void LaunchApp()
+        {
+            Process.Start(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "explorer.exe"), "\"" + AppExe + "\"");
+        }
 
-        public static void RestartWindows() { Process.Start(new ProcessStartInfo("shutdown.exe", "/r /t 0") { CreateNoWindow = true, UseShellExecute = false }); }
+        public static void RestartWindows() { Process.Start(new ProcessStartInfo(SystemTool("shutdown.exe"), "/r /t 0") { CreateNoWindow = true, UseShellExecute = false }); }
 
         public static Icon AppIcon() { return Icon.ExtractAssociatedIcon(Application.ExecutablePath); }
     }
@@ -241,6 +270,14 @@ namespace KeyboardTogglerSetup
                 "Setup installs to " + Setup.Dir + " and adds the Interception keyboard driver (free, LGPL) " +
                 "that lets it block only the laptop keyboard." +
                 (Setup.DriverInstalled() ? "" : "\n\nWindows needs one restart after installing the driver.");
+            if (Setup.IsArm64())
+            {
+                body.Text = Setup.ArmMessage;
+                startup.Visible = false;
+                primary.Visible = false;
+                secondary.Text = "Close";
+                AcceptButton = secondary;
+            }
             ResumeLayout(false);
         }
 
@@ -354,7 +391,9 @@ namespace KeyboardTogglerSetup
             try { Directory.Delete(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "KeyboardToggler"), true); } catch { }
 
             // Delete this temp copy once we've exited.
-            Process.Start(new ProcessStartInfo("cmd.exe", "/c ping -n 3 127.0.0.1 >nul & del \"" + self + "\"") { CreateNoWindow = true, UseShellExecute = false });
+            // cmd looks for "ping" in its working folder first, so run it from System32.
+            Process.Start(new ProcessStartInfo(Setup.SystemTool("cmd.exe"), "/c ping -n 3 127.0.0.1 >nul & del \"" + self + "\"")
+                { CreateNoWindow = true, UseShellExecute = false, WorkingDirectory = Environment.SystemDirectory });
 
             if (quiet) return;
             if (driverRemoved)

@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+- **No more stuck keys** after switching the laptop keyboard off with the shortcut typed on it. Keys
+  that are still held at that moment (like the shortcut's Ctrl and Alt) are now released normally,
+  instead of staying "pressed" in Windows until you tapped them on the external keyboard.
+- The shortcut typed on the switched-off laptop keyboard now takes effect when you let go of the key,
+  so holding it a little too long no longer types into the app you're using.
+- In the **Keep it off?** prompt, Enter and Space now keep the keyboard off. They used to turn it
+  straight back on.
+- Setup refuses to install on Windows on Arm, where the keyboard driver can't load and every keyboard
+  and mouse would stop working after the restart.
+- Setup now starts Windows tools by their full path, so a file with the same name sitting next to the
+  installer (for example in Downloads) can't run with admin rights.
+
 ## 2.2.0 — 2026-10-21
 
 - **Custom shortcut.** Right-click the tray icon → **Change shortcut…** and press the combination you

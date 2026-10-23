@@ -29,6 +29,9 @@ namespace KeyboardToggler
             back.Click += (s, e) => Close();
             var buttons = new FlowLayoutPanel { Dock = DockStyle.Bottom, FlowDirection = FlowDirection.RightToLeft, Height = 42, Padding = new Padding(8) };
             buttons.Controls.Add(back); buttons.Controls.Add(keep);
+            // "Keep it off" goes first in tab order so it gets the focus: a focused button becomes the default button,
+            // so with the focus on "Turn back on", Enter or Space would turn the keyboard straight back on.
+            keep.TabIndex = 0; back.TabIndex = 1;
             Controls.Add(text); Controls.Add(buttons);
             AcceptButton = keep;
 

@@ -16,6 +16,8 @@ namespace KeyboardToggler
         [DllImport("user32.dll")] public static extern bool UnregisterHotKey(IntPtr hwnd, int id);
         [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr hwnd, int msg, IntPtr w, IntPtr l);
         [DllImport("user32.dll")] public static extern bool DestroyIcon(IntPtr h);
+        [DllImport("user32.dll")] public static extern short GetAsyncKeyState(int vk);
+        [DllImport("user32.dll")] public static extern uint MapVirtualKey(uint code, uint mapType);
 
         // Device handle of a WM_INPUT message (zero for injected input).
         public static IntPtr RawInputDevice(IntPtr hRawInput)
