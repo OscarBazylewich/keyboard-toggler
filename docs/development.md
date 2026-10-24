@@ -35,7 +35,10 @@ docs/         user documentation and README images
 
 ## Releasing
 
-1. Bump the version in `src/AssemblyInfo.cs` and add an entry to `CHANGELOG.md`.
+1. Bump the version everywhere it's written: `src/AssemblyInfo.cs` (2 lines), `src/app.manifest`,
+   `setup/Setup.cs` (3 lines) and `setup/setup.manifest`. Turn the `Unreleased` section of
+   `CHANGELOG.md` into the new version with today's date.
 2. Run `build.cmd` and test the installer.
-3. Tag `vX.Y.Z`, create a GitHub release, attach `dist\KeyboardToggler-Setup.exe` and put its
+3. Commit and push, then tag `vX.Y.Z` on that commit and push the tag.
+4. Create a GitHub release from the tag, attach `dist\KeyboardToggler-Setup.exe` and put its
    SHA-256 in the release notes (`Get-FileHash dist\KeyboardToggler-Setup.exe`).
