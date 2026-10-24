@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
-using System.Drawing.Drawing2D;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
@@ -11,6 +10,7 @@ using System.Text.RegularExpressions;
 using System.Threading;
 using System.Windows.Forms;
 using Microsoft.Win32;
+using KeyboardToggler.Ui;
 
 namespace KeyboardToggler
 {
@@ -51,7 +51,7 @@ namespace KeyboardToggler
         }
     }
 
-    sealed class TrayApp : ApplicationContext
+    sealed class TrayApp : ApplicationContext, IKeyboardHost
     {
         static readonly string LearnedFile = Path.Combine(Log.Dir, "external-keyboards.txt");
         // Per-keyboard overrides of the built-in detection: "+<hardware id>" = switch it off too, "-<hardware id>" = never.
@@ -59,7 +59,7 @@ namespace KeyboardToggler
         static readonly Regex Revision = new Regex(@"&REV_[^&\\]*", RegexOptions.IgnoreCase);
 
         readonly NotifyIcon tray = new NotifyIcon();
-        readonly Icon iconOn = MakeIcon(false), iconOff = MakeIcon(true);
+        Icon iconOn, iconOff;
         readonly MsgWindow win;
         readonly System.Windows.Forms.Timer poll = new System.Windows.Forms.Timer { Interval = 2000 };
         readonly HashSet<string> learned = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -68,7 +68,10 @@ namespace KeyboardToggler
         readonly Dictionary<string, KeyboardDevice> rawDevices = new Dictionary<string, KeyboardDevice>(StringComparer.OrdinalIgnoreCase);
         Blocker blocker;
         KeepOffPrompt prompt;
-        ToolStripMenuItem statusItem, toggleItem, startupItem, laptopItem, shortcutItem;
+        KeyboardsWindow keyboardsWindow;
+        bool shownOff;
+        readonly ContextMenu menu = new ContextMenu();
+        MenuItem toggleItem, startupItem;
         Hotkey shortcut = Hotkey.Load();
 
         public TrayApp()
@@ -97,29 +100,27 @@ namespace KeyboardToggler
             bool shortcutOk = win.RegisterShortcut(shortcut);
             if (!shortcutOk) Log.Write("shortcut " + shortcut + " is taken by another app");
 
-            var menu = new ContextMenuStrip();
-            statusItem = new ToolStripMenuItem { Enabled = false };
-            toggleItem = new ToolStripMenuItem("", null, (s, e) => Toggle());
-            startupItem = new ToolStripMenuItem("Start with Windows", null, (s, e) => SetStartup(!startupItem.Checked));
-            menu.Items.Add(statusItem);
-            menu.Items.Add(toggleItem);
-            menu.Items.Add(new ToolStripSeparator());
-            laptopItem = new ToolStripMenuItem("Laptop keyboard");
-            laptopItem.DropDownItems.Add("(loading)");
-            menu.Items.Add(laptopItem);
-            shortcutItem = new ToolStripMenuItem("", null, (s, e) => ChangeShortcut());
-            menu.Items.Add(shortcutItem);
-            menu.Items.Add(startupItem);
-            menu.Items.Add("Show detected keyboards", null, (s, e) => ShowKeyboards());
-            menu.Items.Add("Open log folder", null, (s, e) => { Directory.CreateDirectory(Log.Dir); Process.Start("explorer.exe", Log.Dir); });
-            menu.Items.Add(new ToolStripSeparator());
-            menu.Items.Add("Exit", null, (s, e) => ExitThread());
-            menu.Opening += (s, e) => { startupItem.Checked = IsStartup(); FillLaptopMenu(); };
+            // Windows' own menu, so it looks and behaves like the rest of Windows 11 (rounded corners, dark mode, DPI).
+            toggleItem = new MenuItem("", (s, e) => Toggle()) { DefaultItem = true };   // bold: what a left-click does
+            startupItem = new MenuItem("Start with Windows", (s, e) => SetStartup(!startupItem.Checked));
+            if (blocker == null) menu.MenuItems.Add(new MenuItem("The keyboard driver isn't running") { Enabled = false });
+            menu.MenuItems.Add(toggleItem);
+            menu.MenuItems.Add("-");
+            menu.MenuItems.Add("Keyboards\u2026", (s, e) => ShowKeyboards());
+            menu.MenuItems.Add("Change shortcut\u2026", (s, e) => ChangeShortcut());
+            menu.MenuItems.Add(startupItem);
+            menu.MenuItems.Add("Open log folder", (s, e) => OpenLogFolder());
+            menu.MenuItems.Add("-");
+            menu.MenuItems.Add("Exit", (s, e) => ExitThread());
+            menu.Popup += (s, e) => { startupItem.Checked = IsStartup(); UpdateUi(); };
 
-            tray.ContextMenuStrip = menu;
+            tray.ContextMenu = menu;
             tray.MouseClick += (s, e) => { if (e.Button == MouseButtons.Left) Toggle(); };
+            DarkMenus.Apply();
+            MakeIcons();
             tray.Visible = true;
             UpdateUi();
+            Theme.Changed += ThemeChanged;
 
             poll.Tick += (s, e) => CheckExternal();
             poll.Start();
@@ -161,27 +162,35 @@ namespace KeyboardToggler
         {
             if (blocker == null)
             {
-                MessageBox.Show("The Interception driver isn't available, so the laptop keyboard can't be switched off.\n\n" +
-                    "Reinstall Keyboard Toggler, then restart Windows.", "Keyboard Toggler", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                Notice.Show(null, NoticeKind.Error, "The keyboard driver isn't running",
+                    "Keyboard Toggler needs the Interception driver to switch the laptop keyboard off. Reinstall Keyboard Toggler, then restart Windows.");
                 return;
             }
             if (!ExternalPresent())
             {
-                MessageBox.Show(learned.Count == 0
-                    ? "No external keyboard detected yet.\n\nPress any key on your external keyboard once, then try again."
-                    : "None of your external keyboards is connected, so the laptop keyboard stays on.\n\n(If this is a new keyboard, press a key on it once, then try again.)",
-                    "Keyboard Toggler", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                if (learned.Count == 0)
+                    Notice.Show(null, NoticeKind.Info, "Type on your external keyboard first",
+                        "Press any key on your external keyboard once, then try again. That's how Keyboard Toggler knows which keyboard is yours.");
+                else
+                    Notice.Show(null, NoticeKind.Info, "No external keyboard connected",
+                        "The laptop keyboard stays on until one of your external keyboards is connected. If it's a new keyboard, press a key on it once, then try again.");
                 return;
             }
             int n;
-            try { n = blocker.Start(IsTarget); }
-            catch (Exception ex) { Log.Write("start failed: " + ex); MessageBox.Show("Couldn't switch off the laptop keyboard:\n" + ex.Message, "Keyboard Toggler"); return; }
+            var present = Devices.PresentKeyboards();
+            try { n = blocker.Start(id => IsTarget(id, present)); }
+            catch (Exception ex)
+            {
+                Log.Write("start failed: " + ex);
+                Notice.Show(null, NoticeKind.Error, "Couldn't switch off the laptop keyboard", ex.Message);
+                return;
+            }
             if (n == 0)
             {
                 Log.Write("no laptop keyboard among: " + string.Join(" | ", blocker.Keyboards().Values));
-                MessageBox.Show("Couldn't find the laptop's built-in keyboard.\n\n" +
-                    "Right-click the tray icon, open \"Laptop keyboard\" and tick your laptop's keyboard, then try again.",
-                    "Keyboard Toggler", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                if (Notice.Show(null, NoticeKind.Warning, "Couldn't find the laptop keyboard",
+                        "Choose your laptop's keyboard in the Keyboards window, then try again.", "Choose keyboard", "Cancel") == 0)
+                    ShowKeyboards();
                 return;
             }
             Log.Write("laptop keyboard OFF");
@@ -211,12 +220,34 @@ namespace KeyboardToggler
         void UpdateUi()
         {
             bool off = Off;
+            if (off != shownOff && keyboardsWindow != null && !keyboardsWindow.IsDisposed) keyboardsWindow.Reload();   // its "off right now" note
+            shownOff = off;
             tray.Icon = off ? iconOff : iconOn;
-            tray.Text = off ? "Laptop keyboard: OFF (click to turn on)" : "Laptop keyboard: ON (click to turn off)";
-            statusItem.Text = blocker == null ? "Interception driver not available" : off ? "Laptop keyboard is OFF" : "Laptop keyboard is ON";
-            toggleItem.Text = (off ? "Turn laptop keyboard on" : "Turn laptop keyboard off");
-            toggleItem.ShortcutKeyDisplayString = shortcut.ToString();
-            shortcutItem.Text = "Change shortcut...";
+            tray.Text = off ? "Laptop keyboard is off\nClick to turn it back on" : "Laptop keyboard is on\nClick to turn it off";
+            toggleItem.Text = (off ? "Turn laptop keyboard on" : "Turn laptop keyboard off") + "\t" + shortcut;   // tab: right-aligned shortcut
+        }
+
+        // Tray icons in the Windows 11 style: white on a dark taskbar, black on a light one.
+        void MakeIcons()
+        {
+            Icon oldOn = iconOn, oldOff = iconOff;
+            iconOn = TrayIcon.Create(false, Theme.DarkTaskbar);
+            iconOff = TrayIcon.Create(true, Theme.DarkTaskbar);
+            tray.Icon = Off ? iconOff : iconOn;
+            if (oldOn != null) oldOn.Dispose();
+            if (oldOff != null) oldOff.Dispose();
+        }
+
+        // Light/dark mode or accent colour changed (may be raised on another thread).
+        void ThemeChanged()
+        {
+            win.BeginInvoke(() => { DarkMenus.Apply(); MakeIcons(); UpdateUi(); });
+        }
+
+        void OpenLogFolder()
+        {
+            Directory.CreateDirectory(Log.Dir);
+            Process.Start(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "explorer.exe"), "\"" + Log.Dir + "\"");
         }
 
         void Balloon(string title, string text, ToolTipIcon icon)
@@ -254,53 +285,78 @@ namespace KeyboardToggler
         {
             forceOn.Remove(hardwareId); forceOff.Remove(hardwareId);
             if (on != AutoBuiltIn(hardwareId, Devices.PresentKeyboards())) (on ? forceOn : forceOff).Add(hardwareId);
+            Log.Write((on ? "switch off with laptop keyboard: " : "never switch off: ") + hardwareId);
+            ChoicesChanged();
+        }
+
+        // Saves the keyboard choices and, if the laptop keyboard is off, applies them right away:
+        // re-filter with the new choice, or turn back on if nothing is left to block.
+        void ChoicesChanged()
+        {
             try
             {
                 Directory.CreateDirectory(Log.Dir);
                 File.WriteAllLines(ChoiceFile, forceOn.Select(h => "+" + h).Concat(forceOff.Select(h => "-" + h)).ToArray());
             }
             catch (Exception ex) { Log.Write("saving keyboard choice: " + ex.Message); }
-            Log.Write((on ? "switch off with laptop keyboard: " : "never switch off: ") + hardwareId);
             rawDevices.Clear();
-
-            if (Off)
+            if (!Off) return;
+            blocker.Stop();
+            var present = Devices.PresentKeyboards();
+            if (blocker.Start(id => IsTarget(id, present)) == 0)
             {
-                // Apply right away: re-filter with the new choice, or turn back on if nothing is left to block.
-                blocker.Stop();
-                if (blocker.Start(IsTarget) == 0)
-                {
-                    Log.Write("laptop keyboard ON (no keyboard selected)");
-                    if (prompt != null) { var p = prompt; prompt = null; p.Kept = true; p.Close(); }
-                    UpdateUi();
-                }
-                else CheckExternal();
+                Log.Write("laptop keyboard ON (no keyboard selected)");
+                if (prompt != null) { var p = prompt; prompt = null; p.Kept = true; p.Close(); }
+                UpdateUi();
             }
+            else CheckExternal();
         }
 
-        void FillLaptopMenu()
+        // ---- the Keyboards window (IKeyboardHost) ----
+
+        void ShowKeyboards()
         {
-            laptopItem.DropDownItems.Clear();
-            laptopItem.DropDownItems.Add(new ToolStripMenuItem("Keyboards to switch off:") { Enabled = false });
+            if (keyboardsWindow != null && !keyboardsWindow.IsDisposed) { keyboardsWindow.Activate(); return; }
+            Log.Write(DetectedKeyboards());
+            keyboardsWindow = new KeyboardsWindow(this);
+            keyboardsWindow.FormClosed += (s, e) => keyboardsWindow = null;
+            keyboardsWindow.Show();
+            keyboardsWindow.Activate();
+        }
+
+        List<KeyboardInfo> IKeyboardHost.Keyboards()
+        {
             var present = Devices.PresentKeyboards();
             var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var list = new List<KeyboardInfo>();
             foreach (var d in present.OrderBy(d => d.Internal ? 0 : 1).ThenBy(d => d.Name))
             {
                 if (!seen.Add(d.HardwareId)) continue;
-                string id = d.HardwareId;
-                var item = new ToolStripMenuItem(d.Name + (d.Internal ? "  (built in)" : "") + "   " + Revision.Replace(id, ""));
-                item.Checked = IsTarget(id, present);
-                item.Click += (s, e) => SetTarget(id, !item.Checked);
-                laptopItem.DropDownItems.Add(item);
-            }
-            if (forceOn.Count + forceOff.Count > 0)
-            {
-                laptopItem.DropDownItems.Add(new ToolStripSeparator());
-                laptopItem.DropDownItems.Add("Reset to automatic", null, (s, e) =>
+                bool target = IsTarget(d.HardwareId, present);
+                list.Add(new KeyboardInfo
                 {
-                    foreach (var h in forceOn.Concat(forceOff).ToList()) SetTarget(h, AutoBuiltIn(h, Devices.PresentKeyboards()));
+                    Key = d.HardwareId, Name = d.Name, HardwareId = Revision.Replace(d.HardwareId, ""),
+                    BuiltIn = d.Internal, SwitchedOff = target, TypedOn = !target && IsLearned(d.HardwareId),
                 });
             }
+            return list;
         }
+
+        void IKeyboardHost.SetSwitchOff(string key, bool switchOff) { SetTarget(key, switchOff); }
+
+        bool IKeyboardHost.HasManualChoices { get { return forceOn.Count + forceOff.Count > 0; } }
+
+        // All at once, so the result doesn't depend on the order the choices are undone in.
+        void IKeyboardHost.ResetToAutomatic()
+        {
+            forceOn.Clear(); forceOff.Clear();
+            Log.Write("keyboard choices reset to automatic");
+            ChoicesChanged();
+        }
+
+        string IKeyboardHost.Details() { return DetectedKeyboards(); }
+
+        bool IKeyboardHost.KeyboardIsOff { get { return Off; } }
 
         // ---- external keyboard tracking ----
 
@@ -351,23 +407,24 @@ namespace KeyboardToggler
         {
             rawDevices.Clear();
             CheckExternal();
+            if (keyboardsWindow != null && !keyboardsWindow.IsDisposed) keyboardsWindow.Reload();
         }
 
-        void ShowKeyboards()
+        // The plain-text report behind "Copy details" (and logged when the Keyboards window opens).
+        string DetectedKeyboards()
         {
             var present = Devices.PresentKeyboards();
             var sb = new StringBuilder();
             sb.AppendLine("Connected keyboards:");
             foreach (var d in present)
-                sb.AppendLine(string.Format("  {0} {1}{2}\n      {3}",
+                sb.AppendLine(string.Format("  {0} {1}{2}\r\n      {3}",
                     IsTarget(d.HardwareId, present) ? "[laptop keyboard]" : IsLearned(d.HardwareId) ? "[external, typed on]" : "[external]",
                     d.Name, d.Internal ? " (built in)" : "", d.HardwareId));
             sb.AppendLine();
             sb.AppendLine("Through the Interception driver:");
             if (blocker == null) sb.AppendLine("  (driver not available)");
             else foreach (var kv in blocker.Keyboards()) sb.AppendLine("  #" + kv.Key + "  " + kv.Value);
-            Log.Write(sb.ToString());
-            MessageBox.Show(sb.ToString(), "Keyboard Toggler - keyboards");
+            return sb.ToString();
         }
 
         // ---- startup ----
@@ -404,34 +461,10 @@ namespace KeyboardToggler
             catch (Exception ex) { Log.Write("startup setting: " + ex.Message); }
         }
 
-        // ---- icons ----
-
-        static Icon MakeIcon(bool off)
-        {
-            using (var bmp = new Bitmap(32, 32))
-            {
-                using (var g = Graphics.FromImage(bmp))
-                {
-                    g.SmoothingMode = SmoothingMode.AntiAlias;
-                    var body = off ? Color.FromArgb(140, 140, 140) : Color.FromArgb(46, 160, 67);
-                    using (var b = new SolidBrush(body)) g.FillRectangle(b, 1, 7, 30, 19);
-                    using (var w = new SolidBrush(Color.White))
-                    {
-                        for (int r = 0; r < 2; r++) for (int c = 0; c < 6; c++) g.FillRectangle(w, 4 + c * 4, 10 + r * 5, 3, 3);
-                        g.FillRectangle(w, 8, 20, 16, 3);
-                    }
-                    if (off) using (var p = new Pen(Color.FromArgb(220, 30, 30), 4)) g.DrawLine(p, 3, 29, 29, 3);
-                }
-                IntPtr h = bmp.GetHicon();
-                var icon = (Icon)Icon.FromHandle(h).Clone();
-                Native.DestroyIcon(h);
-                return icon;
-            }
-        }
-
         protected override void ExitThreadCore()
         {
             TurnOn("app exit");
+            if (keyboardsWindow != null && !keyboardsWindow.IsDisposed) keyboardsWindow.Close();
             tray.Visible = false;
             base.ExitThreadCore();
         }
@@ -440,10 +473,33 @@ namespace KeyboardToggler
         {
             if (disposing)
             {
-                poll.Dispose(); tray.Dispose(); win.DestroyHandle();
+                Theme.Changed -= ThemeChanged;
+                poll.Dispose(); tray.Dispose(); menu.Dispose(); win.DestroyHandle();
+                if (iconOn != null) iconOn.Dispose();
+                if (iconOff != null) iconOff.Dispose();
                 if (blocker != null) blocker.Dispose();
             }
             base.Dispose(disposing);
+        }
+    }
+
+    // Windows' own menus only follow dark mode when the app opts in, which uxtheme exposes by ordinal only
+    // (Windows 10 1903 and later). Does nothing elsewhere.
+    static class DarkMenus
+    {
+        [DllImport("uxtheme.dll", EntryPoint = "#135")] static extern int SetPreferredAppMode(int mode);
+        [DllImport("uxtheme.dll", EntryPoint = "#136")] static extern void FlushMenuThemes();
+
+        public static void Apply()
+        {
+            var v = Environment.OSVersion.Version;
+            if (v.Major < 10 || v.Build < 18362) return;
+            try
+            {
+                SetPreferredAppMode(Theme.HighContrast ? 0 : Theme.Dark ? 2 : 3);   // default / force dark / force light
+                FlushMenuThemes();
+            }
+            catch (EntryPointNotFoundException) { }
         }
     }
 

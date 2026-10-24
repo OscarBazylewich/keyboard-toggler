@@ -8,7 +8,7 @@ Windows groups devices into *containers*: everything built into the computer sha
 own container, while each plugged-in device (USB, Bluetooth, dock) gets its own. Keyboard Toggler
 treats keyboards in the computer's container as built in, which covers PS/2, I2C and internal-USB
 laptop keyboards alike. Keyboards Windows can't describe fall back to the classic PS/2 IDs, and you
-can override the choice from the tray menu (**Laptop keyboard**).
+can override the choice from the tray menu (**Keyboards…**).
 
 External keyboards are recognised by their full hardware ID, so Bluetooth keyboards count too.
 

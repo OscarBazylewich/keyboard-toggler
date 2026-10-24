@@ -18,10 +18,15 @@ src/          the tray app (KeyboardToggler.exe)
   Interception.cs   driver P/Invoke + the Blocker that filters the built-in keyboard
   Devices.cs        keyboard list from Windows' device tree (names, hardware IDs, built-in or not)
   Hotkey.cs         the toggle shortcut: storage, display names, scan codes
+  TrayApp.cs        tray menu, safety nets, keyboard choice, startup setting, logging
+  TrayIcon.cs       the tray icon (follows the taskbar's light/dark colour)
+  KeepOffPrompt.cs  the 15-second "Keep it off?" card
   ShortcutDialog.cs the "Change shortcut" window
-  TrayApp.cs        tray icon, menu, safety nets, keyboard choice, startup setting, logging
-  KeepOffPrompt.cs  the 15-second "Keep it off?" prompt
+  KeyboardsWindow.cs the "Keyboards" window (which keyboards switch off, details for bug reports)
   Native.cs         Raw Input / hotkey Win32 calls
+  app.manifest      DPI awareness and Windows 10/11 compatibility
+  ui/           the Windows 11-style look shared with the installer: theme (light/dark, accent,
+                fonts), buttons, toggles, dialogs, and the keyboard pictogram used by the icons
 setup/        the installer and uninstaller (one exe; the app files are embedded as resources)
 tools/        build-time icon generator
 vendor/       Interception 1.0.1 binaries (unmodified; checksums in vendor/README.md)

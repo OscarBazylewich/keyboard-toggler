@@ -54,6 +54,14 @@ namespace KeyboardToggler
             return string.Join(" + ", parts);
         }
 
+        // The keys one by one, e.g. {"Ctrl", "Alt", "F9"}, with the same names and order as ToString().
+        public string[] KeyLabels()
+        {
+            var keys = new List<string>(ModsText(Mods).Split(new[] { " + " }, StringSplitOptions.RemoveEmptyEntries));
+            keys.Add(KeyName(Vk));
+            return keys.ToArray();
+        }
+
         // Scan code the keyboard sends for the key (what the driver sees), and whether it's an E0 "extended" key.
         public ushort ScanCode { get { return (ushort)(MapVirtualKey(Vk, 4 /*MAPVK_VK_TO_VSC_EX*/) & 0xFF); } }
         public bool Extended { get { return IsExtended(Vk); } }

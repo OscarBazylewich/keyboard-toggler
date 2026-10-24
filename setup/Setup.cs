@@ -2,6 +2,7 @@
 //   KeyboardToggler-Setup.exe              -> install wizard
 //   Uninstall.exe /uninstall               -> remove app + Interception driver (copied into the install folder)
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
 using System.IO;
@@ -10,6 +11,7 @@ using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Windows.Forms;
+using KeyboardToggler.Ui;
 using Microsoft.Win32;
 
 [assembly: AssemblyTitle("Keyboard Toggler Setup")]
@@ -218,74 +220,59 @@ namespace KeyboardTogglerSetup
         public static Icon AppIcon() { return Icon.ExtractAssociatedIcon(Application.ExecutablePath); }
     }
 
-    sealed class InstallForm : Form
+    // The install wizard: one window whose content follows the stage. Install runs on a background thread and reports
+    // progress through BeginInvoke; the window can't be closed while it works. Designed at 96 DPI, scaled with Theme.S.
+    sealed class InstallForm : FluentForm
     {
-        readonly Label body = new Label { AutoSize = false };
-        readonly CheckBox startup = new CheckBox { Text = "Start Keyboard Toggler when I sign in", Checked = true, AutoSize = true };
-        readonly CheckBox launch = new CheckBox { Text = "Open Keyboard Toggler now", Checked = true, AutoSize = true, Visible = false };
-        readonly ProgressBar bar = new ProgressBar { Style = ProgressBarStyle.Marquee, Visible = false, Height = 16 };
-        readonly Button primary = new Button { Text = "Install", Width = 110, Height = 30 };
-        readonly Button secondary = new Button { Text = "Cancel", Width = 110, Height = 30 };
-        enum Stage { Welcome, Working, DoneRestart, Done }
+        // Error: Install threw ("Try again" runs it again). Arm: Windows on Arm, which can't be installed on.
+        enum Stage { Welcome, Working, DoneRestart, Done, Error, Arm }
         Stage stage = Stage.Welcome;
+        bool upgrade, statusGlyph;
+        FluentCheckBox option;   // the check box under the text, if the stage has one
+        int contentHeight;       // grows but never shrinks, so the buttons stay put from stage to stage
+
+        const string SuccessGlyph = "\uE930";   // "Completed": a check mark in a circle, like Glyph.Error's crossed circle
+
+        readonly ThemedPanel content = new ThemedPanel { Surface = Surface.Layer, TabIndex = 0 };
+        readonly ThemedPanel commands = new ThemedPanel { Surface = Surface.Background, TopDivider = true, TabIndex = 1 };
+        readonly AppIconView logo = new AppIconView();
+        readonly TextBlock title = new TextBlock { Font = Theme.Subtitle, Wrap = false, Text = Setup.AppName };
+        readonly TextBlock version = new TextBlock { Font = Theme.Caption, Role = TextRole.Secondary, Wrap = false, Text = "Version " + Setup.Version };
+        readonly GlyphIcon statusIcon = new GlyphIcon { Points = 12f };
+        readonly TextBlock heading = new TextBlock { Font = Theme.BodyStrong };
+        readonly List<TextBlock> paragraphs = new List<TextBlock>();
+        readonly FluentCheckBox startup = new FluentCheckBox { Text = "Start Keyboard Toggler when I sign in", Checked = true };
+        readonly FluentCheckBox launch = new FluentCheckBox { Text = "Open Keyboard Toggler now", Checked = true };
+        readonly FluentProgress bar = new FluentProgress();
+        readonly FluentButton primary = new FluentButton { Accent = true, TabIndex = 0 };
+        readonly FluentButton secondary = new FluentButton { TabIndex = 1 };
 
         public InstallForm()
         {
-            SuspendLayout();
-            AutoScaleDimensions = new SizeF(96f, 96f);
-            AutoScaleMode = AutoScaleMode.Dpi;
             Text = "Keyboard Toggler " + Setup.Version + " Setup";
             Icon = Setup.AppIcon();
-            Font = SystemFonts.MessageBoxFont;
             FormBorderStyle = FormBorderStyle.FixedDialog;
             MaximizeBox = MinimizeBox = false;
             StartPosition = FormStartPosition.CenterScreen;
-            ClientSize = new Size(560, 380);
-            BackColor = SystemColors.Window;
 
-            var header = new Panel { Dock = DockStyle.Top, Height = 84, BackColor = Color.FromArgb(46, 160, 67) };
-            var logo = new PictureBox { Image = new Icon(Icon, 48, 48).ToBitmap(), SizeMode = PictureBoxSizeMode.CenterImage, Bounds = new Rectangle(20, 18, 48, 48), BackColor = Color.White };
-            var title = new Label { Text = "Keyboard Toggler", ForeColor = Color.White, Font = new Font(Font.FontFamily, 16f, FontStyle.Bold), AutoSize = true, Location = new Point(84, 16) };
-            var subtitle = new Label { Text = "Switch your laptop keyboard off while you use an external one.", ForeColor = Color.White, AutoSize = true, Location = new Point(86, 50) };
-            header.Controls.AddRange(new Control[] { logo, title, subtitle });
-
-            body.Bounds = new Rectangle(24, 104, 512, 150);
-            startup.Location = new Point(24, 262);
-            launch.Location = new Point(24, 262);
-            bar.Bounds = new Rectangle(24, 266, 512, 16);
-
-            var footer = new Panel { Dock = DockStyle.Bottom, Height = 56, BackColor = SystemColors.Control };
-            secondary.Location = new Point(ClientSize.Width - 24 - secondary.Width, 13);
-            primary.Location = new Point(secondary.Left - 10 - primary.Width, 13);
-            footer.Controls.AddRange(new Control[] { primary, secondary });
-
-            Controls.AddRange(new Control[] { body, startup, launch, bar, footer, header });
+            content.Controls.AddRange(new Control[] { logo, title, version, statusIcon, heading, startup, launch, bar });
+            commands.Controls.AddRange(new Control[] { primary, secondary });
+            Controls.AddRange(new Control[] { content, commands });
             AcceptButton = primary;
+            CancelButton = secondary;
             primary.Click += (s, e) => OnPrimary();
             secondary.Click += (s, e) => OnSecondary();
 
-            bool upgrade = File.Exists(Setup.AppExe);
-            body.Text = (upgrade ? "Keyboard Toggler is already installed. Setup will update it.\n\n" : "") +
-                "Left-click the tray icon to switch the built-in keyboard off or on. Your external keyboard always keeps working.\n\n" +
-                "Setup installs to " + Setup.Dir + " and adds the Interception keyboard driver (free, LGPL) " +
-                "that lets it block only the laptop keyboard." +
-                (Setup.DriverInstalled() ? "" : "\n\nWindows needs one restart after installing the driver.");
-            if (Setup.IsArm64())
-            {
-                body.Text = Setup.ArmMessage;
-                startup.Visible = false;
-                primary.Visible = false;
-                secondary.Text = "Close";
-                AcceptButton = secondary;
-            }
-            ResumeLayout(false);
+            bool installed = File.Exists(Setup.AppExe), restartNote = !Setup.DriverInstalled();
+            if (Setup.IsArm64()) ShowArm();
+            else ShowWelcome(installed, restartNote);
         }
 
         void OnPrimary()
         {
             switch (stage)
             {
-                case Stage.Welcome: StartInstall(); break;
+                case Stage.Welcome: case Stage.Error: StartInstall(); break;
                 case Stage.DoneRestart: Setup.RestartWindows(); Close(); break;
                 case Stage.Done: if (launch.Checked) Setup.LaunchApp(); Close(); break;
             }
@@ -299,54 +286,298 @@ namespace KeyboardTogglerSetup
             base.OnFormClosing(e);
         }
 
+        protected override void OnHandleCreated(EventArgs e)
+        {
+            base.OnHandleCreated(e);
+            UpdateCloseBox();
+        }
+
+        protected override void OnLoad(EventArgs e)
+        {
+            base.OnLoad(e);
+            ActiveControl = (Control)AcceptButton;   // start on the main button, like a standard dialog
+        }
+
         void StartInstall()
         {
-            stage = Stage.Working;
-            startup.Visible = false; bar.Visible = true;
-            primary.Enabled = secondary.Enabled = false;
             bool start = startup.Checked;
+            ShowWorking();
             var t = new Thread(() =>
             {
                 try
                 {
-                    bool restart = Setup.Install(start, msg => BeginInvoke((Action)(() => body.Text = msg)));
+                    bool restart = Setup.Install(start, msg => BeginInvoke((Action)(() => ShowProgress(msg))));
                     BeginInvoke((Action)(() => Finish(restart)));
                 }
                 catch (Exception ex)
                 {
-                    BeginInvoke((Action)(() =>
-                    {
-                        stage = Stage.Welcome; bar.Visible = false;
-                        body.Text = "Setup couldn't finish:\n\n" + ex.Message;
-                        primary.Text = "Try again"; primary.Enabled = secondary.Enabled = true;
-                    }));
+                    BeginInvoke((Action)(() => ShowError(ex.Message)));
                 }
             });
             t.IsBackground = true;
             t.Start();
         }
 
+        // ---- Stages (UI only) ----
+
+        void ShowWelcome(bool upgrade, bool restartNote)
+        {
+            stage = Stage.Welcome;
+            this.upgrade = upgrade;
+            SetStatus(null, TextRole.Primary, "", TextRole.Primary);
+            SetText(TextRole.Primary, (upgrade ? "Keyboard Toggler is already installed. Setup will update it.\n\n" : "") +
+                "Left-click the tray icon to switch the built-in keyboard off or on. Your external keyboard always keeps working.\n\n" +
+                "Setup installs it to " + Setup.Dir + " and adds the Interception keyboard driver (free, LGPL), " +
+                "which lets it block only the laptop keyboard." +
+                (restartNote ? "\n\nWindows needs one restart after installing the driver." : ""));
+            option = startup;
+            SetCommands("Install", "Cancel");
+        }
+
+        void ShowWorking()
+        {
+            stage = Stage.Working;
+            SetStatus(null, TextRole.Primary, upgrade ? "Updating Keyboard Toggler" : "Installing Keyboard Toggler", TextRole.Primary);
+            SetText(TextRole.Secondary, "");
+            option = null;
+            primary.Enabled = secondary.Enabled = false;
+            Relayout();
+        }
+
+        void ShowProgress(string message)
+        {
+            SetText(TextRole.Secondary, message);
+            Relayout();
+        }
+
         void Finish(bool restart)
         {
-            bar.Visible = false;
-            primary.Enabled = secondary.Enabled = true;
+            SetStatus(SuccessGlyph, TextRole.Success, "Keyboard Toggler is installed", TextRole.Primary);
             if (restart)
             {
                 stage = Stage.DoneRestart;
-                body.Text = "Keyboard Toggler is installed.\n\nRestart Windows to load the keyboard driver. " +
-                    "After you sign in, Keyboard Toggler appears in the tray (click the ^ arrow next to the clock if you don't see it).\n\n" +
-                    "You can also open it from the Start menu.";
-                primary.Text = "Restart now"; secondary.Text = "Restart later";
+                SetText(TextRole.Primary, "Restart Windows to load the keyboard driver. After you sign in, Keyboard Toggler appears in the tray " +
+                    "(click the ^ arrow next to the clock if you don't see it).\n\nYou can also open it from the Start menu.");
+                option = null;
+                SetCommands("Restart now", "Restart later");
             }
             else
             {
                 stage = Stage.Done;
-                body.Text = "Keyboard Toggler is installed.\n\nIt lives in the tray: click the ^ arrow next to the clock if you don't see it. " +
-                    "You can also open it from the Start menu.";
-                launch.Visible = true;
-                primary.Text = "Finish"; secondary.Text = "Close";
+                SetText(TextRole.Primary, "It lives in the tray: click the ^ arrow next to the clock if you don't see it. " +
+                    "You can also open it from the Start menu.");
+                option = launch;
+                SetCommands("Finish", "Close");
             }
         }
+
+        void ShowError(string message)
+        {
+            stage = Stage.Error;
+            SetStatus(Glyph.Error, TextRole.Critical, "Setup couldn't finish", TextRole.Critical);
+            SetText(TextRole.Primary, message);
+            option = null;
+            SetCommands("Try again", "Cancel");
+        }
+
+        void ShowArm()
+        {
+            stage = Stage.Arm;
+            // The message's first paragraph is its headline.
+            string[] parts = Setup.ArmMessage.Split(new[] { "\n\n" }, 2, StringSplitOptions.None);
+            SetStatus(Glyph.Warning, TextRole.Caution, parts[0].TrimEnd('.'), TextRole.Primary);
+            SetText(TextRole.Primary, parts.Length > 1 ? parts[1] : "");
+            option = null;
+            SetCommands(null, "Close");
+        }
+
+        // ---- Building blocks ----
+
+        // A headline under the app's name, with an optional glyph before it (null = none, empty text = no headline).
+        void SetStatus(string glyph, TextRole glyphRole, string text, TextRole textRole)
+        {
+            statusGlyph = glyph != null;
+            if (glyph != null) { statusIcon.Symbol = glyph; statusIcon.Role = glyphRole; }
+            heading.Text = text;
+            heading.Role = textRole;
+        }
+
+        // The body text; blank lines start a new paragraph.
+        void SetText(TextRole role, string text)
+        {
+            string[] parts = text.Replace("\r\n", "\n").Trim('\n').Split(new[] { "\n\n" }, StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length == 0) parts = new[] { "" };
+            while (paragraphs.Count < parts.Length)
+            {
+                var p = new TextBlock();
+                paragraphs.Add(p);
+                content.Controls.Add(p);
+            }
+            while (paragraphs.Count > parts.Length)
+            {
+                var p = paragraphs[paragraphs.Count - 1];
+                paragraphs.RemoveAt(paragraphs.Count - 1);
+                content.Controls.Remove(p);
+                p.Dispose();
+            }
+            for (int i = 0; i < parts.Length; i++)
+            {
+                paragraphs[i].Text = parts[i].Trim('\n');
+                paragraphs[i].Role = role;
+            }
+        }
+
+        // The buttons, right-aligned: first is the main (accent) one; without it, second becomes the main one.
+        void SetCommands(string first, string second)
+        {
+            primary.Visible = first != null;
+            if (first != null) primary.Text = first;
+            secondary.Text = second;
+            secondary.Accent = first == null;
+            AcceptButton = first != null ? primary : secondary;
+            primary.Enabled = secondary.Enabled = true;
+            Relayout();
+            if (IsHandleCreated) ActiveControl = first != null ? primary : secondary;
+        }
+
+        void Relayout()
+        {
+            int pad = Theme.S(24), width = Theme.S(520), inner = width - 2 * pad;
+            content.SuspendLayout();
+
+            // Header: the app icon with the name and version beside it.
+            logo.Bounds = new Rectangle(pad, pad, Theme.S(48), Theme.S(48));
+            int tx = logo.Right + Theme.S(16);
+            title.Width = version.Width = width - tx - pad;
+            title.FitHeight();
+            version.FitHeight();
+            title.Location = new Point(tx, logo.Top + (logo.Height - title.Height - version.Height) / 2);
+            version.Location = new Point(tx, title.Bottom);
+            int y = logo.Bottom + pad;
+
+            bool hasHeading = heading.Text.Length > 0;
+            heading.Visible = hasHeading;
+            statusIcon.Visible = hasHeading && statusGlyph;
+            if (hasHeading)
+            {
+                int hx = statusGlyph ? pad + Theme.S(28) : pad;
+                heading.SetBounds(hx, y, width - hx - pad, 1);
+                heading.FitHeight();
+                int line = TextRenderer.MeasureText("Ag", heading.Font, Size.Empty, TextFormatFlags.NoPadding).Height;
+                statusIcon.Bounds = new Rectangle(pad, y, Theme.S(20), line);
+                y = heading.Bottom + Theme.S(4);
+            }
+            foreach (var p in paragraphs)
+            {
+                p.SetBounds(pad, y, inner, 1);
+                p.FitHeight();
+                y = p.Bottom + Theme.S(12);
+            }
+
+            startup.Visible = option == startup;
+            launch.Visible = option == launch;
+            bar.Visible = stage == Stage.Working;
+            bar.Indeterminate = stage == Stage.Working;
+            if (option != null)
+            {
+                // The box is drawn 2 px in from the control's edge (room for the focus ring): line it up with the text.
+                int w = Theme.S(34) + TextRenderer.MeasureText(option.Text, option.Font, Size.Empty, TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix).Width;
+                option.Bounds = new Rectangle(pad - Theme.S(2), y, w, Theme.S(32));
+                y = option.Bottom;
+            }
+            else if (stage == Stage.Working)
+            {
+                bar.Bounds = new Rectangle(pad, y, inner, Theme.S(4));
+                y = bar.Bottom;
+            }
+            else y -= Theme.S(12);
+
+            contentHeight = Math.Max(contentHeight, y + pad);
+            content.Bounds = new Rectangle(0, 0, width, contentHeight);
+            content.ResumeLayout(false);
+
+            // Command area: equal-width buttons, right-aligned.
+            int bw = Math.Max(Theme.S(120), Math.Max(primary.PreferredWidth(0), secondary.PreferredWidth(0))), bh = Theme.S(32);
+            commands.Bounds = new Rectangle(0, contentHeight, width, pad + bh + pad);
+            secondary.Bounds = new Rectangle(width - pad - bw, pad, bw, bh);
+            primary.Bounds = new Rectangle(secondary.Left - Theme.S(8) - bw, pad, bw, bh);
+
+            var size = new Size(width, commands.Bottom);
+            if (ClientSize != size)
+            {
+                ClientSize = size;
+                if (IsHandleCreated)
+                {
+                    // Grown past the bottom of the screen? Move up.
+                    Rectangle area = Screen.FromHandle(Handle).WorkingArea;
+                    if (Bottom > area.Bottom && Top >= area.Top) Top = Math.Max(area.Top, area.Bottom - Height);
+                }
+            }
+            UpdateCloseBox();
+        }
+
+        // Greys out the title bar's close button while Setup works (closing is blocked then anyway).
+        void UpdateCloseBox()
+        {
+            if (IsHandleCreated) EnableMenuItem(GetSystemMenu(Handle, false), 0xF060 /*SC_CLOSE*/, stage == Stage.Working ? 1u /*MF_GRAYED*/ : 0u);
+        }
+
+        [DllImport("user32.dll")] static extern IntPtr GetSystemMenu(IntPtr hwnd, bool revert);
+        [DllImport("user32.dll")] static extern int EnableMenuItem(IntPtr menu, uint item, uint flags);
+    }
+
+    // The app's own icon, sharp at any size: Windows picks the closest image in the exe's icon (Setup.AppIcon() only
+    // gives the 32 px system size). Paints over its parent's colour, like the UI kit's controls.
+    sealed class AppIconView : Control
+    {
+        Icon icon;
+        int loaded;
+
+        public AppIconView()
+        {
+            SetStyle(ControlStyles.OptimizedDoubleBuffer | ControlStyles.AllPaintingInWmPaint | ControlStyles.ResizeRedraw | ControlStyles.UserPaint, true);
+            SetStyle(ControlStyles.Selectable, false);
+            TabStop = false;
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            e.Graphics.Clear(Parent != null ? Parent.BackColor : Theme.Layer);
+            int size = Math.Min(Width, Height);
+            if (size <= 0) return;
+            if (icon == null || loaded != size)
+            {
+                if (icon != null) icon.Dispose();
+                icon = Load(size);
+                loaded = size;
+            }
+            e.Graphics.DrawIcon(icon, new Rectangle((Width - size) / 2, (Height - size) / 2, size, size));
+        }
+
+        static Icon Load(int size)
+        {
+            try
+            {
+                IntPtr h;
+                if (SHDefExtractIcon(Application.ExecutablePath, 0, 0, out h, IntPtr.Zero, (uint)size) == 0 && h != IntPtr.Zero)
+                {
+                    try { using (var shared = Icon.FromHandle(h)) return (Icon)shared.Clone(); }
+                    finally { DestroyIcon(h); }
+                }
+            }
+            catch (EntryPointNotFoundException) { }
+            return Setup.AppIcon();
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing && icon != null) { icon.Dispose(); icon = null; }
+            base.Dispose(disposing);
+        }
+
+        [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+        static extern int SHDefExtractIcon(string iconFile, int index, uint flags, out IntPtr large, IntPtr small, uint size);
+        [DllImport("user32.dll")] static extern bool DestroyIcon(IntPtr icon);
     }
 
     static class Uninstaller
@@ -365,8 +596,8 @@ namespace KeyboardTogglerSetup
                 return;
             }
 
-            if (!quiet && MessageBox.Show("Remove Keyboard Toggler and its Interception keyboard driver?", "Uninstall Keyboard Toggler",
-                    MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
+            if (!quiet && Notice.Show(null, NoticeKind.Question, "Remove Keyboard Toggler?",
+                    "This removes the app and its Interception keyboard driver.", "Remove", "Cancel") != 0)
                 return;
 
             Setup.StopApp();
@@ -398,11 +629,11 @@ namespace KeyboardTogglerSetup
             if (quiet) return;
             if (driverRemoved)
             {
-                if (MessageBox.Show("Keyboard Toggler has been removed.\n\nRestart Windows now to finish removing the keyboard driver?",
-                        "Uninstall Keyboard Toggler", MessageBoxButtons.YesNo, MessageBoxIcon.Information) == DialogResult.Yes)
+                if (Notice.Show(null, NoticeKind.Info, "Keyboard Toggler has been removed",
+                        "Restart Windows to finish removing the keyboard driver.", "Restart now", "Later") == 0)
                     Setup.RestartWindows();
             }
-            else MessageBox.Show("Keyboard Toggler has been removed.", "Uninstall Keyboard Toggler", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            else Notice.Show(null, NoticeKind.Info, "Keyboard Toggler has been removed", "You don't need to restart Windows.", "OK");
         }
     }
 }

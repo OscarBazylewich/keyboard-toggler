@@ -13,6 +13,21 @@
   and mouse would stop working after the restart.
 - Setup now starts Windows tools by their full path, so a file with the same name sitting next to the
   installer (for example in Downloads) can't run with admin rights.
+- **New look.** A Windows 11-style design that follows your light or dark mode and accent colour,
+  with sharp text on high-DPI screens:
+  - a Windows 11-style tray icon (white on a dark taskbar, black on a light one) with a badge that
+    shows the state at a glance: a green check while the laptop keyboard is on, a red bar while it's off;
+  - a new app icon;
+  - Windows' own tray menu, with rounded corners and dark mode;
+  - the **Keep it off?** prompt is now a notification card with a countdown bar (Esc turns the
+    keyboard back on);
+  - a new **Change shortcut** window that shows your shortcut as keys;
+  - message windows and the installer in the same style.
+- **Keyboards window** (tray menu → **Keyboards…**) replaces the "Laptop keyboard" submenu and
+  "Show detected keyboards": turn **Switch off** on or off for each keyboard, and use **Copy details**
+  for bug reports.
+- **Reset to automatic** now undoes all keyboard choices at once. Before, it could turn the laptop
+  keyboard back on halfway through if it was off.
 
 ## 2.2.0 — 2026-10-21
 
