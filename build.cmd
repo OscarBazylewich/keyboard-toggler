@@ -1,5 +1,6 @@
 @echo off
-rem Builds dist\KeyboardToggler-Setup.exe with the C# compiler that ships with Windows (.NET Framework 4.x). No SDK needed.
+rem This file makes dist\KeyboardToggler-Setup.exe with the C# compiler that is part of Windows (.NET Framework 4.x).
+rem It is not necessary to install an SDK.
 setlocal
 cd /d "%~dp0"
 set "CSC=%WINDIR%\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
@@ -7,15 +8,15 @@ set "REFS=/r:System.dll /r:System.Core.dll /r:System.Drawing.dll /r:System.Windo
 if not exist build mkdir build
 if not exist dist mkdir dist
 
-rem 1. App icon (drawn with the same keyboard glyph as the tray icon)
+rem 1. The app icon. It uses the same keyboard glyph as the tray icon.
 "%CSC%" /nologo /out:build\MakeIcon.exe /r:System.Drawing.dll tools\MakeIcon.cs src\ui\KeyboardGlyph.cs || exit /b 1
 build\MakeIcon.exe build\app.ico || exit /b 1
 
-rem 2. The tray app (src\ui is the look shared with the installer)
+rem 2. The tray app. The installer uses the same UI files (src\ui).
 "%CSC%" /nologo /target:winexe /platform:x64 /optimize+ /win32icon:build\app.ico /win32manifest:src\app.manifest %REFS% ^
   /out:build\KeyboardToggler.exe src\*.cs src\ui\*.cs || exit /b 1
 
-rem 3. The installer, with the app and the Interception driver files embedded
+rem 3. The installer. It contains the app and the Interception driver files.
 "%CSC%" /nologo /target:winexe /platform:x64 /optimize+ /win32icon:build\app.ico /win32manifest:setup\setup.manifest %REFS% ^
   /resource:build\KeyboardToggler.exe,KeyboardToggler.exe ^
   /resource:vendor\interception.dll,interception.dll ^
@@ -23,4 +24,4 @@ rem 3. The installer, with the app and the Interception driver files embedded
   /resource:vendor\Interception-LGPL-3.0.txt,Interception-LGPL-3.0.txt ^
   /out:dist\KeyboardToggler-Setup.exe setup\Setup.cs src\ui\*.cs || exit /b 1
 
-echo Built dist\KeyboardToggler-Setup.exe
+echo build.cmd made dist\KeyboardToggler-Setup.exe

@@ -1,6 +1,8 @@
-// Build-time tool: writes the app icon (.ico with PNG-compressed entries, 16-256 px) in the Windows 11 style:
-// the white keyboard glyph (src\ui\KeyboardGlyph.cs, the same one as the tray icon) on a green rounded tile.
-// Every size is drawn for its own pixel grid; the small ones stay flat, the larger ones get a little depth.
+// This tool operates during the build. It writes the app icon. The icon has the same shape as Windows 11 icons.
+// The .ico file has PNG entries from 16 px to 256 px. Each entry shows a white keyboard glyph on a green tile.
+// The glyph is the same as the tray icon glyph (src\ui\KeyboardGlyph.cs). Each tile corner has the shape of a curve.
+// The tool makes each image specially for the pixel grid of its dimension. The small icons are flat.
+// The large icons also have shadows and a white area along the top edge.
 using System;
 using System.Collections.Generic;
 using System.Drawing;
@@ -11,7 +13,7 @@ using KeyboardToggler.Ui;
 
 static class MakeIcon
 {
-    static readonly Color Top = Color.FromArgb(0x34, 0xB3, 0x56), Bottom = Color.FromArgb(0x1F, 0x8A, 0x3B);   // brand green #2EA043 in between
+    static readonly Color Top = Color.FromArgb(0x34, 0xB3, 0x56), Bottom = Color.FromArgb(0x1F, 0x8A, 0x3B);   // the brand green #2EA043 is between these two colors
 
     static void Main(string[] args)
     {
@@ -35,16 +37,17 @@ static class MakeIcon
         }
     }
 
-    // One icon image: tile geometry snapped to whole pixels, then the glyph at a size its layout is drawn for.
+    // This function makes one icon image. First, it puts the tile edges on full pixels.
+    // Then it adds the glyph at a dimension that KeyboardGlyph has a layout for.
     static Bitmap Render(int n)
     {
         bool small = n <= 24, depth = !small;
-        int pad = n <= 16 ? 0 : small ? 1 : Round(n / 16f);                   // 16 px: full bleed ... 256 px: 16
+        int pad = n <= 16 ? 0 : small ? 1 : Round(n / 16f);                   // 16 px: pad 0 ... 256 px: pad 16
         float tile = n - 2 * pad, radius = Round(tile * 0.17f * 2) / 2f;
-        int glyph = Round(tile * (small ? 0.75f : 0.68f));                     // a bigger glyph when tiny
-        if ((n - glyph) % 2 != 0) glyph++;                                     // centred on whole pixels
+        int glyph = Round(tile * (small ? 0.75f : 0.68f));                     // small icons have a larger glyph
+        if ((n - glyph) % 2 != 0) glyph++;                                     // the glyph is at the center, on full pixels
 
-        var px = new float[n * n * 4];   // premultiplied B, G, R, A in 0..1
+        var px = new float[n * n * 4];   // premultiplied B, G, R, A values from 0 to 1
         for (int y = 0; y < n; y++)
             for (int x = 0; x < n; x++)
             {
@@ -52,20 +55,20 @@ static class MakeIcon
                 float b = 0, g = 0, r = 0, a = 0;
                 if (depth)
                 {
-                    // Soft shadow under the tile: a blurred, slightly lowered copy of its shape.
+                    // The shadow below the tile is a blurred copy of the tile shape. It is a small distance down.
                     float blur = n / 32f, drop = n / 64f;
                     float sd = RoundRect(x + 0.5f, y + 0.5f - drop, pad, pad, n - pad, n - pad, radius);
-                    a = 0.28f * Smooth(blur, -blur, sd);   // black, so the colour channels stay 0
+                    a = 0.28f * Smooth(blur, -blur, sd);   // the shadow is black, thus the color channels stay at 0
                 }
                 if (cov > 0)
                 {
-                    // Gradient from the top-left light to the bottom-right dark, mostly vertical.
+                    // The gradient goes from Top (top left) to Bottom (bottom right). Its direction is almost vertical.
                     float t = ((y + 0.5f - pad) * 0.8f + (x + 0.5f - pad) * 0.2f) / tile;
                     Color c = Lerp(Top, Bottom, Math.Max(0, Math.Min(1, t)));
                     float cr = c.R / 255f, cg = c.G / 255f, cb = c.B / 255f;
                     if (depth)
                     {
-                        // A faint light rim along the top edge, fading out down the sides.
+                        // This code adds a small quantity of white along the top edge. This white gradually decreases down the sides.
                         float inside = -RoundRect(x + 0.5f, y + 0.5f, pad, pad, n - pad, n - pad, radius);
                         float rim = Math.Max(1, n / 48f);
                         float up = Math.Max(0, 1 - (y + 0.5f - pad) / (tile * 0.5f));
@@ -82,7 +85,7 @@ static class MakeIcon
         int at = (n - glyph) / 2;
         if (depth)
             using (var shade = KeyboardGlyph.Render(glyph, Color.FromArgb(70, 0x0B, 0x4A, 0x1C)))
-                Over(px, n, shade, at, at + Math.Max(1, Round(n / 64f)));     // the glyph's shadow, a touch lower
+                Over(px, n, shade, at, at + Math.Max(1, Round(n / 64f)));     // the glyph shadow is a small distance down
         using (var white = KeyboardGlyph.Render(glyph, Color.White))
             Over(px, n, white, at, at);
 
@@ -92,7 +95,7 @@ static class MakeIcon
         for (int i = 0; i < n * n; i++)
         {
             float a = px[i * 4 + 3];
-            for (int ch = 0; ch < 3; ch++) bytes[i * 4 + ch] = a > 0 ? Byte(px[i * 4 + ch] / a) : (byte)0;   // un-premultiply
+            for (int ch = 0; ch < 3; ch++) bytes[i * 4 + ch] = a > 0 ? Byte(px[i * 4 + ch] / a) : (byte)0;   // this code divides by A to remove the premultiplication
             bytes[i * 4 + 3] = Byte(a);
         }
         for (int y = 0; y < n; y++) Marshal.Copy(bytes, y * n * 4, new IntPtr(data.Scan0.ToInt64() + (long)y * data.Stride), n * 4);
@@ -100,7 +103,7 @@ static class MakeIcon
         return bmp;
     }
 
-    // Fraction of pixel (x, y) inside the tile (4 x 4 samples).
+    // This function gives the part of pixel (x, y) that is in the tile (4 x 4 samples).
     static float Coverage(int x, int y, int pad, float tile, float radius)
     {
         int hits = 0;
@@ -110,7 +113,7 @@ static class MakeIcon
         return hits / 16f;
     }
 
-    // Draws a (non-premultiplied) bitmap over the premultiplied buffer at (ox, oy).
+    // This function puts a bitmap that is not premultiplied on the premultiplied buffer at (ox, oy).
     static void Over(float[] px, int n, Bitmap src, int ox, int oy)
     {
         for (int y = 0; y < src.Height; y++)
@@ -137,7 +140,7 @@ static class MakeIcon
         return (float)Math.Sqrt(ox * ox + oy * oy) + Math.Min(Math.Max(qx, qy), 0) - r;
     }
 
-    // 0 at v = from, 1 at v = to, smooth in between.
+    // This function gives 0 at v = from and 1 at v = to. Between these values, the result changes gradually.
     static float Smooth(float from, float to, float v)
     {
         float t = Math.Max(0, Math.Min(1, (v - from) / (to - from)));

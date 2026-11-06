@@ -6,11 +6,13 @@ using System.Windows.Forms;
 
 namespace KeyboardToggler.Ui
 {
-    // A control that needs more than a repaint when the theme changes (e.g. a new BackColor).
+    // This interface is for a control that must do more than paint the control again when the theme changes
+    // (for example, when the control must set a new BackColor).
     interface IThemed { void ApplyTheme(); }
 
-    // Base window: themed background, Segoe UI Variable, a frame that matches the theme, and no WinForms
-    // auto-scaling (layout code scales its pixel sizes with Theme.S; fonts scale with the DPI by themselves).
+    // This is the base class for the windows. It has a theme background, the Segoe UI Variable font, a frame in
+    // the theme colors, and no WinForms auto-scaling. The layout code uses Theme.S to change its pixel dimensions
+    // for the DPI. Windows changes the dimensions of the fonts for the DPI.
     class FluentForm : Form
     {
         public FluentForm()
@@ -23,7 +25,7 @@ namespace KeyboardToggler.Ui
             Theme.Changed += ThemeChanged;
         }
 
-        // Borderless popups get Windows 11 rounded corners and a themed outline.
+        // A popup window without a border gets Windows 11 rounded corners and a line around it in the theme color.
         protected virtual bool IsPopup { get { return false; } }
 
         protected override void OnHandleCreated(EventArgs e)
@@ -38,7 +40,8 @@ namespace KeyboardToggler.Ui
             try { BeginInvoke((Action)ApplyTheme); } catch (InvalidOperationException) { }
         }
 
-        // Re-colours the window after a theme change. Override to update anything else, then call base.
+        // This method changes the window colors after a theme change. To update other items, override it.
+        // Then call base.ApplyTheme().
         protected virtual void ApplyTheme()
         {
             if (IsDisposed) return;
@@ -71,7 +74,7 @@ namespace KeyboardToggler.Ui
 
     enum Surface { Background, Layer }
 
-    // A panel in a theme surface colour, optionally with a 1 px divider along its top (dialog footers).
+    // This is a panel in a theme surface color. It can also have a 1 px divider line at its top (for dialog footers).
     class ThemedPanel : Panel, IThemed
     {
         Surface surface;
@@ -101,7 +104,8 @@ namespace KeyboardToggler.Ui
 
     enum TextRole { Primary, Secondary, Disabled, Accent, Critical, Caution, Success, OnAccent }
 
-    // Themed text. Wraps by default, never treats '&' as a mnemonic, and paints over its parent's colour.
+    // This control shows text in a theme color. Word wrap is on if you do not change Wrap. The control does not
+    // show '&' as a mnemonic. It paints its background in the BackColor of its parent.
     class TextBlock : Control
     {
         TextRole role;
@@ -110,7 +114,7 @@ namespace KeyboardToggler.Ui
 
         public TextRole Role { get { return role; } set { role = value; Invalidate(); } }
         public bool Wrap { get { return wrap; } set { wrap = value; Invalidate(); } }
-        public TextFormatFlags Align { get { return align; } set { align = value; Invalidate(); } }   // e.g. TextFormatFlags.HorizontalCenter
+        public TextFormatFlags Align { get { return align; } set { align = value; Invalidate(); } }   // for example, TextFormatFlags.HorizontalCenter
 
         public TextBlock()
         {
@@ -137,11 +141,12 @@ namespace KeyboardToggler.Ui
 
         TextFormatFlags Flags
         {
-            // NoPadding: GDI's padding grows with the font size, which would push headings right of body text.
+            // NoPadding: GDI padding increases with the font size. Without NoPadding, a heading starts more to the
+            // right than the body text.
             get { return (wrap ? TextFormatFlags.WordBreak | TextFormatFlags.TextBoxControl : TextFormatFlags.SingleLine | TextFormatFlags.EndEllipsis) | TextFormatFlags.NoPrefix | TextFormatFlags.NoPadding | align; }
         }
 
-        // Height that shows all of the text at the current width.
+        // This method gives the height that shows all of the text at the width of the control.
         public int MeasureHeight()
         {
             return TextRenderer.MeasureText(Text.Length == 0 ? " " : Text, Font, new Size(Math.Max(1, Width), int.MaxValue), Flags).Height;
@@ -159,7 +164,7 @@ namespace KeyboardToggler.Ui
         }
     }
 
-    // An icon-font glyph in a theme colour (e.g. Glyph.Warning in TextRole.Caution).
+    // This control shows a glyph from the icon font in a theme color (for example, Glyph.Warning in TextRole.Caution).
     class GlyphIcon : Control
     {
         string glyph = Ui.Glyph.Info;
@@ -185,15 +190,16 @@ namespace KeyboardToggler.Ui
         }
     }
 
-    // Windows 11 push button. Accent = the main action, filled with the accent colour. Works as a form's
-    // AcceptButton/CancelButton; Space and Enter click it when it has the focus.
+    // This is a Windows 11 push button. If Accent is true, the button is the primary button and has the accent color.
+    // You can use it as the AcceptButton or the CancelButton of a form. When the button has the focus,
+    // you can also push Space or Enter to click it.
     class FluentButton : Control, IButtonControl
     {
         bool hover, pressed, accent, isDefault;
         string glyph;
 
         public bool Accent { get { return accent; } set { accent = value; Invalidate(); } }
-        public string GlyphText { get { return glyph; } set { glyph = value; Invalidate(); } }   // optional icon-font glyph before the text
+        public string GlyphText { get { return glyph; } set { glyph = value; Invalidate(); } }   // an optional glyph from the icon font that shows before the text
         public DialogResult DialogResult { get; set; }
 
         public FluentButton()
@@ -205,7 +211,8 @@ namespace KeyboardToggler.Ui
             Size = new Size(Theme.S(120), Theme.S(32));
         }
 
-        // Width that fits the text (and glyph) with Windows 11 padding, but at least minWidth.
+        // This method gives a width for the text (and the glyph) with Windows 11 padding. The width is minWidth
+        // or more.
         public int PreferredWidth(int minWidth)
         {
             int w = TextRenderer.MeasureText(Text, Font, Size.Empty, TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix).Width + Theme.S(24);
@@ -278,7 +285,7 @@ namespace KeyboardToggler.Ui
                 return;
             }
             Font iconFont = Theme.IconFont(Font.SizeInPoints);
-            var measure = TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix;   // no EndEllipsis: with no width limit it measures just "..."
+            var measure = TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix;   // no EndEllipsis: with EndEllipsis and no width limit, MeasureText measures only "..."
             int glyphW = TextRenderer.MeasureText(glyph, iconFont, Size.Empty, measure | TextFormatFlags.NoPadding).Width;
             int textW = TextRenderer.MeasureText(Text, Font, Size.Empty, measure).Width;
             int gap = Theme.S(8), x = Math.Max(Theme.S(8), (Width - glyphW - gap - textW) / 2);
@@ -287,7 +294,8 @@ namespace KeyboardToggler.Ui
         }
     }
 
-    // Windows 11 toggle switch with its label on the left (settings-row style). Click or Space toggles it.
+    // This is a Windows 11 toggle switch with its label on the left (as in a Settings row). To set it to on or
+    // off, click it or push Space.
     class FluentToggle : Control
     {
         bool on, hover;
@@ -320,7 +328,7 @@ namespace KeyboardToggler.Ui
         protected override void OnKeyUp(KeyEventArgs e) { if (e.KeyCode == Keys.Space && Enabled) Checked = !Checked; base.OnKeyUp(e); }
         protected override void OnMouseDown(MouseEventArgs e)
         {
-            if (e.Button == MouseButtons.Left && TabStop && CanFocus && !Focused) Focus();   // so Space next acts on this control
+            if (e.Button == MouseButtons.Left && TabStop && CanFocus && !Focused) Focus();   // after this, Space operates this control
             base.OnMouseDown(e);
         }
         protected override void OnMouseEnter(EventArgs e) { hover = true; Invalidate(); base.OnMouseEnter(e); }
@@ -368,7 +376,7 @@ namespace KeyboardToggler.Ui
         }
     }
 
-    // Windows 11 check box with its label on the right. Click or Space toggles it.
+    // This is a Windows 11 check box with its label on the right. To set it to on or off, click it or push Space.
     class FluentCheckBox : Control
     {
         bool on, hover;
@@ -401,7 +409,7 @@ namespace KeyboardToggler.Ui
         protected override void OnKeyUp(KeyEventArgs e) { if (e.KeyCode == Keys.Space && Enabled) Checked = !Checked; base.OnKeyUp(e); }
         protected override void OnMouseDown(MouseEventArgs e)
         {
-            if (e.Button == MouseButtons.Left && TabStop && CanFocus && !Focused) Focus();   // so Space next acts on this control
+            if (e.Button == MouseButtons.Left && TabStop && CanFocus && !Focused) Focus();   // after this, Space operates this control
             base.OnMouseDown(e);
         }
         protected override void OnMouseEnter(EventArgs e) { hover = true; Invalidate(); base.OnMouseEnter(e); }
@@ -443,7 +451,8 @@ namespace KeyboardToggler.Ui
         }
     }
 
-    // Windows 11 progress bar: a 1 px track with a 3 px rounded accent bar. Indeterminate = a moving segment.
+    // This is a Windows 11 progress bar: a 1 px track with a 3 px rounded bar in the accent color. If Indeterminate is
+    // true, a short bar moves across the track.
     class FluentProgress : Control
     {
         float value;
@@ -479,7 +488,7 @@ namespace KeyboardToggler.Ui
             if (indeterminate)
             {
                 double t = ((DateTime.Now - start).TotalMilliseconds % 1800) / 1800.0;
-                t = t < 0.5 ? 2 * t * t : 1 - Math.Pow(-2 * t + 2, 2) / 2;   // ease in-out
+                t = t < 0.5 ? 2 * t * t : 1 - Math.Pow(-2 * t + 2, 2) / 2;   // ease-in-out curve: the bar is slow at the start and at the end
                 w = Width * 0.4f;
                 x = (float)(-w + (Width + w) * t);
             }
@@ -497,7 +506,7 @@ namespace KeyboardToggler.Ui
         }
     }
 
-    // A 1 px themed separator line.
+    // This is a 1 px separator line in the theme color.
     class DividerLine : Control
     {
         public DividerLine()

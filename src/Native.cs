@@ -19,7 +19,7 @@ namespace KeyboardToggler
         [DllImport("user32.dll")] public static extern short GetAsyncKeyState(int vk);
         [DllImport("user32.dll")] public static extern uint MapVirtualKey(uint code, uint mapType);
 
-        // Device handle of a WM_INPUT message (zero for injected input).
+        // This method gives the device handle of a WM_INPUT message. The handle is zero for injected input.
         public static IntPtr RawInputDevice(IntPtr hRawInput)
         {
             RAWINPUTHEADER h;

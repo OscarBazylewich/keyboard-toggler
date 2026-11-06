@@ -1,9 +1,9 @@
 * text=auto
 
-# Windows batch files must keep CRLF line endings to run reliably
+# Windows batch files must keep CRLF line endings. If the line endings are different, errors can occur.
 *.cmd text eol=crlf
 
-# Third-party files are stored byte-for-byte so their published checksums stay valid
+# Git keeps the vendor files byte for byte. Thus, their SHA-256 values do not change.
 vendor/* -text
 vendor/README.md text
 

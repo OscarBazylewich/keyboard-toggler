@@ -7,7 +7,8 @@ using System.Windows.Forms;
 
 namespace KeyboardToggler
 {
-    // The toggle shortcut: modifier flags as RegisterHotKey takes them, plus one virtual key.
+    // Hotkey is the shortcut that deactivates or activates the laptop keyboard.
+    // It has the modifier values that RegisterHotKey uses and one virtual key.
     sealed class Hotkey
     {
         public const uint Alt = 0x1, Ctrl = 0x2, Shift = 0x4, Win = 0x8;
@@ -17,7 +18,8 @@ namespace KeyboardToggler
         public readonly uint Mods, Vk;
         public Hotkey(uint mods, uint vk) { Mods = mods; Vk = vk; }
 
-        // Needs Ctrl, Alt or Win (Shift alone would fire while typing) and a key that isn't itself a modifier.
+        // The shortcut must have Ctrl, Alt or Win to prevent accidental operation when you type.
+        // Shift is not sufficient. The shortcut must also have one key that is not a modifier key.
         public bool IsValid
         {
             get { return (Mods & (Ctrl | Alt | Win)) != 0 && Vk != 0 && !IsModifierKey((Keys)Vk); }
@@ -54,7 +56,8 @@ namespace KeyboardToggler
             return string.Join(" + ", parts);
         }
 
-        // The keys one by one, e.g. {"Ctrl", "Alt", "F9"}, with the same names and order as ToString().
+        // This method gives each key as one item, for example {"Ctrl", "Alt", "F9"}.
+        // The names and the sequence are the same as in ToString().
         public string[] KeyLabels()
         {
             var keys = new List<string>(ModsText(Mods).Split(new[] { " + " }, StringSplitOptions.RemoveEmptyEntries));
@@ -62,11 +65,13 @@ namespace KeyboardToggler
             return keys.ToArray();
         }
 
-        // Scan code the keyboard sends for the key (what the driver sees), and whether it's an E0 "extended" key.
+        // ScanCode is the scan code that the keyboard sends for the key. The Interception driver receives this code.
+        // If the key is an E0 "extended" key, the value of Extended is true.
         public ushort ScanCode { get { return (ushort)(MapVirtualKey(Vk, 4 /*MAPVK_VK_TO_VSC_EX*/) & 0xFF); } }
         public bool Extended { get { return IsExtended(Vk); } }
 
-        // MapVirtualKey doesn't flag every E0 key (e.g. the arrows come back as the numpad keys), so list the standard ones.
+        // MapVirtualKey does not identify all E0 keys. For example, it gives the arrow keys as numpad keys.
+        // Thus, ExtendedKeys contains the standard E0 keys.
         static readonly HashSet<Keys> ExtendedKeys = new HashSet<Keys> {
             Keys.Left, Keys.Right, Keys.Up, Keys.Down, Keys.Insert, Keys.Delete, Keys.Home, Keys.End,
             Keys.PageUp, Keys.PageDown, Keys.Divide, Keys.NumLock, Keys.PrintScreen, Keys.Apps,

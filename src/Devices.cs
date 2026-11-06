@@ -7,17 +7,17 @@ namespace KeyboardToggler
 {
     sealed class KeyboardDevice
     {
-        public string InstanceId;   // e.g. ACPI\MSFT0001\0 or HID\VID_046D&PID_C54D&MI_01&COL01\9&...
-        public string HardwareId;   // first hardware ID, which is also what the Interception driver reports
-        public string Name;         // most descriptive name found on the device or its parents
-        public bool Internal;       // part of the computer itself (built-in), as opposed to plugged in
+        public string InstanceId;   // Example: ACPI\MSFT0001\0 or HID\VID_046D&PID_C54D&MI_01&COL01\9&...
+        public string HardwareId;   // This is HardwareIds[0]. The Interception driver gives the same ID.
+        public string Name;         // Keyboard Toggler uses the best name from the device or from its parent devices.
+        public bool Internal;       // The device is a part of the PC. It is not an external device.
     }
 
-    // Keyboard-class devices from the PnP tree (cfgmgr32).
+    // This class gets the devices of the Keyboard class from the PnP tree (cfgmgr32).
     static class Devices
     {
-        // Windows puts every built-in device in the computer's own "container"; plugged-in devices
-        // (USB, Bluetooth, docks) get a container of their own. This works for PS/2, I2C and internal USB keyboards.
+        // Windows puts all internal devices in the container of the PC. Windows gives each external
+        // device (USB, Bluetooth, dock) a different container. This is correct for PS/2, I2C and internal USB keyboards.
         static readonly Guid ComputerContainer = new Guid("00000000-0000-0000-ffff-ffffffffffff");
         const string KeyboardClass = "{4d36e96b-e325-11ce-bfc1-08002be10318}";
 
@@ -70,7 +70,7 @@ namespace KeyboardToggler
             };
         }
 
-        // \\?\HID#VID_3434&PID_D030&MI_02&Col01#8&282de2e0&0&0000#{884b96c3-...}  ->  HID\VID_3434&PID_D030&MI_02&Col01\8&282de2e0&0&0000
+        // Example: \\?\HID#VID_3434&PID_D030&MI_02&Col01#8&282de2e0&0&0000#{884b96c3-...}  ->  HID\VID_3434&PID_D030&MI_02&Col01\8&282de2e0&0&0000
         public static string InstanceIdFromInterfacePath(string path)
         {
             string s = path;
@@ -82,7 +82,7 @@ namespace KeyboardToggler
 
         static string BestName(uint node)
         {
-            // HID keyboards are all called "HID Keyboard Device"; the USB/Bluetooth parent usually has the product name.
+            // Windows gives the name "HID Keyboard Device" to all HID keyboards. Usually, the USB or Bluetooth parent device has a better name.
             uint n = node;
             for (int i = 0; i < 4; i++)
             {

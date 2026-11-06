@@ -26,10 +26,10 @@ namespace KeyboardToggler
         [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] public static extern uint interception_get_hardware_id(IntPtr ctx, int dev, byte[] buf, uint size);
     }
 
-    // Blocks keys from the built-in keyboard only. The driver is told to route just that
-    // device through this process; every other keyboard bypasses us completely, so a hang
-    // here can never freeze the external keyboard. If the process dies, the driver falls
-    // back to normal pass-through on its own.
+    // Blocker deactivates only the laptop keyboard. The Interception driver sends the strokes of only that
+    // keyboard through this process. The strokes of all other keyboards go directly to Windows.
+    // Thus, a problem in this process cannot stop the external keyboard. If this process stops,
+    // the driver sends all strokes directly to Windows again.
     sealed class Blocker : IDisposable
     {
         IntPtr ctx;
@@ -40,7 +40,7 @@ namespace KeyboardToggler
         KeyGate keys;
         volatile Hotkey hotkey = Hotkey.Default;
 
-        public event Action HotkeyPressed;   // the toggle shortcut typed on a blocked keyboard (raised on a worker thread)
+        public event Action HotkeyPressed;   // This event occurs when you type the shortcut on a deactivated keyboard. It occurs on a worker thread.
         public bool Blocking { get { return running; } }
         public Hotkey Hotkey { set { hotkey = value; } }
 
@@ -48,19 +48,19 @@ namespace KeyboardToggler
         {
             ctx = Ic.interception_create_context();
             if (ctx == IntPtr.Zero)
-                throw new InvalidOperationException("The Interception driver isn't available. Install it and restart Windows.");
+                throw new InvalidOperationException("The Interception driver is not available. Install Keyboard Toggler again. Then start Windows again.");
             isBuiltIn = d => builtIn.Contains(d) ? 1 : 0;
             anyKeyboard = d => d >= 1 && d <= Ic.MaxKeyboard ? 1 : 0;
         }
 
-        // Fallback for keyboards Windows can't describe: the classic PS/2 laptop keyboard IDs.
+        // Use this method when Windows gives no data about a keyboard. It gives true for the usual hardware IDs of a PS/2 laptop keyboard.
         public static bool IsPs2KeyboardId(string hwid)
         {
             string s = hwid.ToUpperInvariant();
             return s.StartsWith("ACPI\\") || s.Contains("PNP0303") || s.Contains("MSFT0001");
         }
 
-        // Interception device number -> first hardware ID (the same ID Windows lists for the device), for every keyboard slot in use.
+        // This method gives the first hardware ID for each Interception device number that has a keyboard. Windows shows the same ID for the device.
         public Dictionary<int, string> Keyboards()
         {
             var result = new Dictionary<int, string>();
@@ -74,7 +74,7 @@ namespace KeyboardToggler
             return result;
         }
 
-        // Starts dropping keys from every keyboard whose hardware ID passes isTarget. Returns how many were found.
+        // This method deactivates each keyboard when isTarget gives true for its hardware ID. The return value is the quantity of these keyboards.
         public int Start(Func<string, bool> isTarget)
         {
             if (running) return builtIn.Count;
@@ -82,10 +82,10 @@ namespace KeyboardToggler
             foreach (var kv in Keyboards())
                 if (isTarget(kv.Value)) builtIn.Add(kv.Key);
             if (builtIn.Count == 0) return 0;
-            // Note which keys are held right now (e.g. the shortcut that is switching this keyboard off): Windows has
-            // already seen them go down, so it has to see them come back up.
+            // Record the keys that are down at this time (for example, the keys of the shortcut that deactivates this keyboard).
+            // Windows got the key-down of these keys. Thus, Windows must also get their key-up.
             var held = KeyGate.KeysDownNow();
-            if (held.Count > 0) Log.Write("keys still held while switching off: " + KeyGate.Names(held.Values));
+            if (held.Count > 0) Log.Write("keys that you held down when Keyboard Toggler deactivated the laptop keyboard: " + KeyGate.Names(held.Values));
             keys = new KeyGate(held, vk => (Native.GetAsyncKeyState(vk) & 0x8000) != 0, Log.Write);
             running = true;
             Ic.interception_set_filter(ctx, isBuiltIn, Ic.FilterAll);
@@ -129,18 +129,19 @@ namespace KeyboardToggler
         }
     }
 
-    // Decides what happens to each stroke from a blocked keyboard. Strokes are swallowed, except the key-ups of keys
-    // that were already held when blocking started: Windows saw those go down, so it must see them come up, or it
-    // keeps them "held" (e.g. the Ctrl+Alt of the shortcut that just switched this keyboard off). It also watches
-    // the strokes for the toggle shortcut, so the blocked keyboard can always switch itself back on.
+    // KeyGate selects which strokes from a deactivated keyboard go to Windows. Windows gets only the key-ups of the keys
+    // that were down when Blocker deactivated the keyboard (for example, Ctrl+Alt of the shortcut that deactivated it).
+    // Windows got the key-down of these keys. Thus, Windows must also get their key-up. If Windows does not get the key-up,
+    // Windows keeps the key down. KeyGate also finds the shortcut in the strokes. Thus, you can always activate
+    // the deactivated keyboard again with the shortcut.
     sealed class KeyGate
     {
-        // Keys are identified by scan code, plus 0x100 for E0-prefixed keys.
-        readonly Dictionary<int, int> heldAtStart;   // key -> virtual key, for keys Windows had down when blocking started
-        readonly Func<int, bool> downInWindows;      // virtual key -> is Windows currently treating it as held
+        // The ID of a key is its scan code. For an E0 key, the ID is the scan code plus 0x100.
+        readonly Dictionary<int, int> heldAtStart;   // key ID -> virtual key, for the keys that were down in Windows when Blocker deactivated the keyboard
+        readonly Func<int, bool> downInWindows;      // virtual key -> gives true if the key is down in Windows at this time
         readonly Action<string> log;
         bool ctrl, alt, shift, win;
-        int shortcutKey = -1;                         // the shortcut's key while it's held down
+        int shortcutKey = -1;                         // the ID of the shortcut key while that key is down
 
         public KeyGate(Dictionary<int, int> heldAtStart, Func<int, bool> downInWindows, Action<string> log)
         {
@@ -149,25 +150,25 @@ namespace KeyboardToggler
             this.log = log;
         }
 
-        // Keys Windows has down right now.
+        // This method gives the keys that are down in Windows at this time.
         public static Dictionary<int, int> KeysDownNow()
         {
             var held = new Dictionary<int, int>();
-            for (int vk = 0x08; vk <= 0xFE; vk++)   // starting at 0x08 skips the mouse buttons
+            for (int vk = 0x08; vk <= 0xFE; vk++)   // the start value 0x08 does not include the mouse buttons
             {
-                if (vk >= 0x10 && vk <= 0x12) continue;   // Shift/Ctrl/Alt: their left/right versions (0xA0-0xA5) are checked instead
+                if (vk >= 0x10 && vk <= 0x12) continue;   // do not examine Shift, Ctrl and Alt here. Examine their left and right keys (0xA0-0xA5)
                 if ((Native.GetAsyncKeyState(vk) & 0x8000) == 0) continue;
                 uint sc = Native.MapVirtualKey((uint)vk, 4 /*MAPVK_VK_TO_VSC_EX*/);
-                if ((sc & 0xFF) == 0 || (sc & 0xFF00) == 0xE100) continue;   // no scan code, or Pause (which never stays down)
+                if ((sc & 0xFF) == 0 || (sc & 0xFF00) == 0xE100) continue;   // the key has no scan code, or the key is Pause. Pause does not stay down.
                 int code = (int)(sc & 0xFF);
                 bool modifier = (vk >= 0xA0 && vk <= 0xA5) || vk == 0x5B || vk == 0x5C;
                 if (modifier) held[code | ((sc & 0xFF00) == 0xE000 ? 0x100 : 0)] = vk;
-                else { held[code] = vk; held[code | 0x100] = vk; }   // MapVirtualKey doesn't flag every E0 key (e.g. arrows), so accept both
+                else { held[code] = vk; held[code | 0x100] = vk; }   // MapVirtualKey does not identify all E0 keys (for example, the arrow keys). Thus, record the two IDs.
             }
             return held;
         }
 
-        // Returns true if the stroke should reach Windows. shortcut: the toggle shortcut was just completed.
+        // The return value is true if Windows must get the stroke. The shortcut parameter is true if this stroke completes the shortcut.
         public bool Handle(ushort code, ushort state, Hotkey hk, out bool shortcut)
         {
             shortcut = false;
@@ -178,8 +179,8 @@ namespace KeyboardToggler
             bool heldBefore = !e1 && heldAtStart.TryGetValue(id, out vk);
             if (heldBefore)
             {
-                if (!down) { pass = true; Forget(vk); log("passed on release of " + Names(new[] { vk })); }   // let Windows see the release
-                else if (!downInWindows(vk)) { Forget(vk); heldBefore = false; }     // released elsewhere since: a new press
+                if (!down) { pass = true; Forget(vk); log("sent the key-up to Windows for " + Names(new[] { vk })); }   // send the key-up to Windows
+                else if (!downInWindows(vk)) { Forget(vk); heldBefore = false; }     // the key is not down in Windows at this time. Thus, this stroke is a new key-down.
             }
 
             if (code == 0x1D) ctrl = down;
@@ -188,7 +189,7 @@ namespace KeyboardToggler
             else if (e0 && (code == 0x5B || code == 0x5C)) win = down;
             else if (down)
             {
-                // A key held since before blocking (and its auto-repeat) isn't a new press, so it can't trigger the shortcut.
+                // If a key was down before Blocker deactivated the keyboard, its key-down is auto-repeat and not new. Thus, KeyGate does not use it for the shortcut.
                 if (!heldBefore && code == hk.ScanCode && e0 == hk.Extended
                     && ctrl == ((hk.Mods & Hotkey.Ctrl) != 0) && alt == ((hk.Mods & Hotkey.Alt) != 0)
                     && shift == ((hk.Mods & Hotkey.Shift) != 0) && win == ((hk.Mods & Hotkey.Win) != 0))
@@ -196,14 +197,15 @@ namespace KeyboardToggler
             }
             else if (id == shortcutKey)
             {
-                // Act on release, so the key isn't still held (and auto-repeating into the focused app) once the keyboard is back on.
+                // Complete the shortcut at the key-up. If KeyGate completes it at the key-down, the key can stay down
+                // in the active app (with auto-repeat) when the keyboard is on again.
                 shortcutKey = -1;
                 shortcut = true;
             }
             return pass;
         }
 
-        // For the log, e.g. "F9, LControlKey, LMenu".
+        // This method gives the key names for the log, for example "F9, LControlKey, LMenu".
         public static string Names(IEnumerable<int> vks)
         {
             var names = new List<string>();

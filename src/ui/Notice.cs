@@ -6,13 +6,15 @@ namespace KeyboardToggler.Ui
 {
     enum NoticeKind { Info, Warning, Error, Question }
 
-    // Windows 11-style message dialog, used instead of MessageBox so every dialog shares the app's look.
+    // Notice is a message dialog with the Windows 11 theme. The app uses Notice and not MessageBox.
+    // Thus, all dialogs of the app have the same theme.
     sealed class Notice : FluentForm
     {
         int choice = -1;
 
-        // Shows the dialog and returns the index of the button clicked (0 = the first, accent button), or -1 if
-        // it was closed with the title bar's close button. Enter clicks the first button, Esc the last one.
+        // This method shows the dialog. It gives the index of the button that you click (0 = the left button, which is the accent button).
+        // It gives -1 if you close the dialog with the close button of the title bar.
+        // Enter clicks button 0. Esc clicks the last button.
         public static int Show(IWin32Window owner, NoticeKind kind, string title, string text, params string[] buttons)
         {
             using (var n = new Notice(kind, title, text, buttons == null || buttons.Length == 0 ? new[] { "OK" } : buttons))

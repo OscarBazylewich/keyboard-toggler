@@ -1,45 +1,52 @@
-# How Keyboard Toggler works
+# How Keyboard Toggler operates
 
-[← Back to the README](../README.md)
+[← Go to the README](../README.md)
 
-## Finding the built-in keyboard
+## How Keyboard Toggler finds the laptop keyboard
 
-Windows groups devices into *containers*: everything built into the computer shares the computer's
-own container, while each plugged-in device (USB, Bluetooth, dock) gets its own. Keyboard Toggler
-treats keyboards in the computer's container as built in, which covers PS/2, I2C and internal-USB
-laptop keyboards alike. Keyboards Windows can't describe fall back to the classic PS/2 IDs, and you
-can override the choice from the tray menu (**Keyboards…**).
+Windows puts each device into a *container*. All the internal devices of the computer are in the
+container of the computer. Each device that you connect (USB, Bluetooth, dock) has a different
+container. Keyboard Toggler identifies the keyboards in the container of the computer as laptop
+keyboards. This method is correct for PS/2, I2C and internal USB laptop keyboards.
 
-External keyboards are recognised by their full hardware ID, so Bluetooth keyboards count too.
+If Windows cannot give data about a keyboard, Keyboard Toggler uses the usual PS/2 hardware IDs to
+identify the laptop keyboard. You can also change the selection in the tray menu (**Keyboards…**).
 
-## Why the usual ways don't work
+Keyboard Toggler identifies an external keyboard by its full hardware ID. Thus, Keyboard Toggler
+also identifies Bluetooth keyboards.
 
-Many laptops connect the built-in keyboard as a **PS/2 keyboard** (`ACPI\MSFT0001`, `i8042prt`
-driver). Windows treats it as a critical system device, so it can't be switched off the usual ways:
+## Problems with the usual methods
 
-| Approach | Result on this kind of laptop |
+Many laptops use a **PS/2 keyboard** (`ACPI\MSFT0001`, `i8042prt` driver) as the laptop keyboard.
+Windows identifies this keyboard as a very important system device. Thus, you cannot deactivate it
+with the usual methods:
+
+| Method | Result on this type of laptop |
 |---|---|
-| Disable the device (Device Manager / SetupAPI) | Refused: *"Cannot disable critical system device."* |
-| Uninstall/remove the device | Needs a restart for every toggle |
-| Low-level keyboard hook + Raw Input | Can't tell which keyboard a key came from in time: Raw Input arrives *after* the hook has to decide, and not at all for blocked keys |
+| Deactivate the device (Device Manager / SetupAPI) | Windows does not let you do this: *"Cannot disable critical system device."* |
+| Uninstall or remove the device | You must start Windows again after each change |
+| Low-level keyboard hook + Raw Input | The hook must make a decision about each key first. Raw Input identifies the keyboard of the key, but it gives this data *after* that decision. For a key that the hook stops, Raw Input gives no data |
 
-## What it does instead
+## The Keyboard Toggler method
 
 Keyboard Toggler uses the [Interception](https://github.com/oblitum/Interception) filter driver.
-When you switch the laptop keyboard off, the app asks the driver to route **only that one device**
-through the app, which drops its keystrokes. Other keyboards never pass through the app at all, so
-even if it hangs, your external keyboard keeps working. When the app stops, the driver goes back to
-plain pass-through by itself, so there is no device state to restore.
+When you deactivate the laptop keyboard, the app tells the driver to send the keystrokes of **only
+that one device** to the app. The app discards these keystrokes. Other keyboards do not go through
+the app. Thus, if the app does not operate correctly, your external keyboard continues to operate.
 
-While the laptop keyboard is off, the app still watches its keystrokes for the toggle shortcut, so
-typing the shortcut on the switched-off keyboard turns it back on.
+When the app stops, the driver automatically lets all keystrokes go through again. Keyboard Toggler
+does not change the condition of a device. Thus, each device stays in its initial condition.
 
-The app runs without admin rights. The installer needs admin rights once, to install the driver.
+While the laptop keyboard is off, the app continues to monitor the keystrokes of that keyboard for
+the shortcut. Thus, you can type the shortcut on the laptop keyboard to activate that keyboard again.
 
-## Where things are stored
+The app operates without administrator rights. Setup must have administrator rights only one time,
+when it installs the Interception driver.
 
-| What | Where |
+## File and registry locations
+
+| Item | Location |
 |---|---|
-| App | `C:\Program Files\KeyboardToggler` |
-| Settings and log | `%LOCALAPPDATA%\KeyboardToggler` (`shortcut.txt`, `laptop-keyboards.txt`, `log.txt`) |
-| Start with Windows | `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` |
+| Keyboard Toggler | `C:\Program Files\KeyboardToggler` |
+| Shortcut, keyboard selection and log | `%LOCALAPPDATA%\KeyboardToggler` (`shortcut.txt`, `laptop-keyboards.txt`, `log.txt`) |
+| Start when you sign in | `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` |

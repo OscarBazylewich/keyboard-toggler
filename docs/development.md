@@ -1,44 +1,55 @@
-# Building from source
+# Make the installer from the source code
 
-[← Back to the README](../README.md)
+[← Go to the README](../README.md)
 
-No SDK needed: the build uses the C# compiler that ships with Windows (.NET Framework 4.x).
+It is not necessary to install an SDK. `build.cmd` uses the C# compiler that Windows supplies
+(.NET Framework 4.x). To make the installer, start this file:
 
 ```bat
 build.cmd
 ```
 
-The result is `dist\KeyboardToggler-Setup.exe`. Every push to `main` is also built by
-[GitHub Actions](../.github/workflows/build.yml), and the installer is attached to the run as an artifact.
+The installer is `dist\KeyboardToggler-Setup.exe`. When you push to `main`,
+[GitHub Actions](../.github/workflows/build.yml) also makes the installer. It attaches the installer to the workflow run as an artifact.
 
-## Source layout
+## Source code folders and files
 
 ```
 src/          the tray app (KeyboardToggler.exe)
-  Interception.cs   driver P/Invoke + the Blocker that filters the built-in keyboard
-  Devices.cs        keyboard list from Windows' device tree (names, hardware IDs, built-in or not)
-  Hotkey.cs         the toggle shortcut: storage, display names, scan codes
-  TrayApp.cs        tray menu, safety nets, keyboard choice, startup setting, logging
-  TrayIcon.cs       the tray icon (follows the taskbar's light/dark colour)
-  KeepOffPrompt.cs  the 15-second "Keep it off?" card
-  ShortcutDialog.cs the "Change shortcut" window
-  KeyboardsWindow.cs the "Keyboards" window (which keyboards switch off, details for bug reports)
-  Native.cs         Raw Input / hotkey Win32 calls
-  app.manifest      DPI awareness and Windows 10/11 compatibility
-  ui/           the Windows 11-style look shared with the installer: theme (light/dark, accent,
-                fonts), buttons, toggles, dialogs, and the keyboard pictogram used by the icons
-setup/        the installer and uninstaller (one exe; the app files are embedded as resources)
-tools/        build-time icon generator
-vendor/       Interception 1.0.1 binaries (unmodified; checksums in vendor/README.md)
-docs/         user documentation and README images
+  Interception.cs   Interception driver P/Invoke and the Blocker that deactivates the laptop keyboard
+  Devices.cs        the keyboards in the Windows device tree (names, hardware IDs, internal or not)
+  Hotkey.cs         the shortcut: saved value, display names, scan codes
+  TrayApp.cs        tray menu, safety functions, keyboard selection, "Start when you sign in", log
+  TrayIcon.cs       the tray icon (its color agrees with the light mode or dark mode of the taskbar)
+  KeepOffPrompt.cs  the "The laptop keyboard is off" card (15 seconds, button "Keep it off")
+  ShortcutDialog.cs the "Change the shortcut" window
+  KeyboardsWindow.cs the "Keyboards" window (keyboards to deactivate, "Copy report" for bug reports)
+  Native.cs         Win32 API functions for raw input and hotkeys
+  app.manifest      DPI awareness and Windows 10 and 11 compatibility
+  ui/           the Windows 11 UI items that the app and the installer use: theme (light mode or
+                dark mode, accent color, fonts), buttons, toggle switches, dialogs, and the keyboard
+                pictogram that the icons use
+setup/        the installer and the uninstaller (one exe file that contains the app files as resources)
+tools/        the icon generator that build.cmd uses
+vendor/       Interception 1.0.1 binary files (not changed, with checksums in vendor/README.md)
+docs/         documentation and the images of the README
 ```
 
-## Releasing
+## Procedure for a new release
 
-1. Bump the version everywhere it's written: `src/AssemblyInfo.cs` (2 lines), `src/app.manifest`,
-   `setup/Setup.cs` (3 lines) and `setup/setup.manifest`. Turn the `Unreleased` section of
-   `CHANGELOG.md` into the new version with today's date.
-2. Run `build.cmd` and test the installer.
-3. Commit and push, then tag `vX.Y.Z` on that commit and push the tag.
-4. Create a GitHub release from the tag, attach `dist\KeyboardToggler-Setup.exe` and put its
-   SHA-256 in the release notes (`Get-FileHash dist\KeyboardToggler-Setup.exe`).
+1. Change the version number in all the files that follow:
+   - `src/AssemblyInfo.cs` (2 lines)
+   - `src/app.manifest`
+   - `setup/Setup.cs` (3 lines)
+   - `setup/setup.manifest`
+2. In `CHANGELOG.md`, change the name of the `Unreleased` section to the new version number and the date of the release.
+3. Start `build.cmd`.
+4. Do a test of the installer.
+5. Commit the changes.
+6. Push the commit.
+7. Tag that commit `vX.Y.Z`.
+8. Push the tag.
+9. Make a GitHub release from the tag.
+10. Attach `dist\KeyboardToggler-Setup.exe` to the release.
+11. Calculate the SHA-256 of the installer with `Get-FileHash dist\KeyboardToggler-Setup.exe`.
+12. Put the SHA-256 in the release notes.

@@ -8,53 +8,54 @@ using KeyboardToggler.Ui;
 
 namespace KeyboardToggler
 {
-    // One connected keyboard, as the Keyboards window shows it.
+    // The data for one connected keyboard, as the Keyboards window shows it.
     sealed class KeyboardInfo
     {
-        public string Key;          // opaque id to pass back to the host
-        public string Name;         // e.g. "Keychron Link" or "Standard PS/2 Keyboard"
-        public string HardwareId;   // for display, e.g. HID\VID_3434&PID_D030&MI_02&Col01
-        public bool BuiltIn;        // Windows says it's part of the computer
-        public bool SwitchedOff;    // switched off together with the laptop keyboard (current choice)
-        public bool TypedOn;        // the app has seen typing on it (it counts as your external keyboard)
+        public string Key;          // ID that the window sends back to the host. The window does not read it.
+        public string Name;         // for example, "Keychron Link" or "Standard PS/2 Keyboard"
+        public string HardwareId;   // the window shows it, for example HID\VID_3434&PID_D030&MI_02&Col01
+        public bool BuiltIn;        // Windows identifies the keyboard as a part of the computer
+        public bool SwitchedOff;    // Keyboard Toggler deactivates it with the laptop keyboard (the selection at this time)
+        public bool TypedOn;        // the app saw that you typed on it (thus it is your external keyboard)
     }
 
-    // What the Keyboards window needs from the app.
+    // The data and functions that the Keyboards window gets from the app.
     interface IKeyboardHost
     {
-        List<KeyboardInfo> Keyboards();              // connected keyboards, built-in first
+        List<KeyboardInfo> Keyboards();              // the connected keyboards, internal keyboards first
         void SetSwitchOff(string key, bool switchOff);
-        bool HasManualChoices { get; }               // any choice differs from automatic detection
+        bool HasManualChoices { get; }               // true if a selection is different from the automatic selection
         void ResetToAutomatic();
-        string Details();                            // plain-text report for bug reports ("Copy details")
-        bool KeyboardIsOff { get; }                  // the laptop keyboard is switched off right now
+        string Details();                            // text report to help find problems ("Copy report")
+        bool KeyboardIsOff { get; }                  // true if the laptop keyboard is off at this time
     }
 
-    // The Keyboards window: a card per connected keyboard, each with a "Switch off" toggle that chooses whether it
-    // switches off together with the laptop keyboard. Modeless; the app keeps one instance and calls Reload() when
-    // keyboards are plugged in or out or choices change. Changes apply as soon as a toggle flips, so Enter and Esc
-    // both just close it.
+    // The Keyboards window. It shows one card for each connected keyboard. Each card has a "Deactivate" toggle.
+    // Use this toggle to select if Keyboard Toggler deactivates that keyboard with the laptop keyboard.
+    // The window is modeless. The app keeps one instance and uses Reload() when you connect or disconnect
+    // a keyboard, or when a selection changes. Each change has an effect when the toggle changes.
+    // Thus Enter and Esc only close the window.
     sealed class KeyboardsWindow : FluentForm
     {
-        // Layout in px at 96 DPI (always scaled with Theme.S).
+        // Dimensions in px at 96 DPI (always use Theme.S on them).
         const int WindowWidth = 520, Pad = 24, CardHeight = 68, CardGap = 4, VisibleCards = 5;
-        const string CopyLabel = "Copy details", CopiedLabel = "Copied", CopyFailedLabel = "Couldn't copy";
+        const string CopyLabel = "Copy report", CopiedLabel = "Copied", CopyFailedLabel = "Not copied";
 
         readonly IKeyboardHost host;
         readonly ThemedPanel header = new ThemedPanel { Surface = Surface.Background };
         readonly TextBlock intro = new TextBlock { Role = TextRole.Secondary,
-            Text = "Choose which keyboards switch off together with the laptop keyboard. Leave your external keyboard on." };
+            Text = "Select the keyboards that Keyboard Toggler deactivates with the laptop keyboard. Do not select your external keyboard." };
         readonly GlyphIcon noteIcon = new GlyphIcon { Symbol = Glyph.Info, Role = TextRole.Accent, Points = 11f };
-        readonly TextBlock note = new TextBlock { Text = "The laptop keyboard is off right now. Changes apply immediately." };
+        readonly TextBlock note = new TextBlock { Text = "The laptop keyboard is off at this time. Each change has an effect immediately." };
         readonly ScrollArea scroller = new ScrollArea();
-        readonly ThemedPanel list = new ThemedPanel { Surface = Surface.Background };   // the cards; the only child of scroller
+        readonly ThemedPanel list = new ThemedPanel { Surface = Surface.Background };   // the cards. This is the only child control of scroller.
         readonly ThemedPanel footer = new ThemedPanel { Surface = Surface.Background, TopDivider = true };
-        readonly FluentButton reset = new FluentButton { Text = "Reset to automatic" };
+        readonly FluentButton reset = new FluentButton { Text = "Set to automatic" };
         readonly GlyphButton copy = new GlyphButton { Label = CopyLabel, Symbol = Glyph.Copy };
         readonly FluentButton close = new FluentButton { Text = "Close", Accent = true };
         readonly Timer copyTimer = new Timer { Interval = 2000 };
         readonly List<KeyboardCard> cards = new List<KeyboardCard>();
-        readonly List<Control> retired = new List<Control>();   // removed cards, disposed once the event that removed them is over
+        readonly List<Control> retired = new List<Control>();   // removed cards. DisposeRetired() disposes them after the end of the event in which the window removed them.
         EmptyCard empty;
         bool updating, reloading, reloadAgain;
 
@@ -74,7 +75,7 @@ namespace KeyboardToggler
             intro.FitHeight();
             header.Controls.AddRange(new Control[] { intro, noteIcon, note });
 
-            // The list spans the window so its scroll bar sits in the right margin, and the cards keep their width.
+            // The list has the full width of the window. Thus its scroll bar is at the right edge of the window, and the cards keep their width.
             list.Width = w - pad;
             scroller.Controls.Add(list);
 
@@ -102,16 +103,17 @@ namespace KeyboardToggler
             Reload();
         }
 
-        // Shows the keyboards and choices as the host has them now, keeping the list's scroll position and the focus.
+        // Shows the keyboards and the selections that the host has at this time.
+        // The scroll position of the list and the focus stay the same.
         public void Reload()
         {
             if (IsDisposed) return;
             if (InvokeRequired)
             {
-                try { BeginInvoke((Action)Reload); } catch (InvalidOperationException) { }   // closing
+                try { BeginInvoke((Action)Reload); } catch (InvalidOperationException) { }   // the window closes
                 return;
             }
-            if (reloading) { reloadAgain = true; return; }   // asked again mid-reload (e.g. by the host): once more afterwards
+            if (reloading) { reloadAgain = true; return; }   // if the host (for example) uses Reload() during a reload, do the reload one more time after this reload
             reloading = true;
             try
             {
@@ -131,7 +133,7 @@ namespace KeyboardToggler
             KeyboardCard focused = CardOf(ActiveControl);
             int focusedIndex = cards.IndexOf(focused);
 
-            updating = true;   // setting the toggles below mustn't count as the user flipping them
+            updating = true;   // Toggled() must ignore the toggle changes that follow. You do not make these changes. This code makes them.
             try
             {
                 // The note shows only while the laptop keyboard is off.
@@ -147,7 +149,7 @@ namespace KeyboardToggler
                 }
                 header.Height = headerBottom + Theme.S(16);
 
-                // Cards already on screen are reused (matched by key), so the focus stays on the toggle it was on.
+                // This uses the cards on the screen again (it finds them by key). Thus the focus stays on the same toggle.
                 var old = new List<KeyboardCard>(cards);
                 cards.Clear();
                 int y2 = 0;
@@ -182,8 +184,8 @@ namespace KeyboardToggler
                 }
                 else if (empty != null) { list.Controls.Remove(empty); Retire(empty); empty = null; }
 
-                // The list scrolls once it's taller than VisibleCards cards (or the screen); the end padding scrolls with it,
-                // so a sixth card peeks out below the fifth.
+                // The list scrolls when its height is more than the height of VisibleCards cards (or of the screen). The end
+                // padding scrolls with the list. Thus you can see a part of card 6 below card 5.
                 int contentH = y2 - gap + pad;
                 list.Height = contentH;
                 int maxH = Math.Min(Theme.S(VisibleCards * (CardHeight + CardGap) - CardGap + Pad), RoomOnScreen() - header.Height - footer.Height);
@@ -194,7 +196,7 @@ namespace KeyboardToggler
                 ClientSize = new Size(w, footer.Bottom);
 
                 scroller.PerformLayout();
-                scroller.AutoScrollPosition = new Point(0, scrollY);   // clamped by WinForms if the list got shorter
+                scroller.AutoScrollPosition = new Point(0, scrollY);   // if the list is shorter, WinForms decreases this value as necessary
 
                 if (focusGone)
                     ActiveControl = cards.Count == 0 ? (Control)close : cards[Math.Min(focusedIndex, cards.Count - 1)].Toggle;
@@ -207,7 +209,7 @@ namespace KeyboardToggler
         {
             if (updating) return;
             try { if (card.Key != null) host.SetSwitchOff(card.Key, card.Toggle.Checked); }
-            finally { Reload(); }   // shows what the host made of it (a refused change flips back)
+            finally { Reload(); }   // shows the result from the host (if the host does not accept a change, the toggle goes back)
         }
 
         void CopyDetails()
@@ -217,7 +219,7 @@ namespace KeyboardToggler
             if (!string.IsNullOrEmpty(text))
             {
                 try { Clipboard.SetDataObject(text, true, 10, 100); ok = true; }
-                catch (ExternalException) { }   // another app kept the clipboard open
+                catch (ExternalException) { }   // a different app kept the clipboard open
             }
             copy.Label = ok ? CopiedLabel : CopyFailedLabel;
             copy.Symbol = ok ? Glyph.Checkmark : Glyph.Warning;
@@ -225,7 +227,7 @@ namespace KeyboardToggler
             copyTimer.Start();
         }
 
-        // A removed card may be the one whose toggle is still raising its event, so it's disposed afterwards.
+        // The toggle event of a removed card can continue at this time. Thus DisposeRetired() disposes the card after the end of that event.
         void Retire(Control c)
         {
             if (!IsHandleCreated) { c.Dispose(); return; }
@@ -240,7 +242,7 @@ namespace KeyboardToggler
             foreach (Control c in done) c.Dispose();
         }
 
-        // Client height the window can have on its screen.
+        // The maximum client height that the window can have on its screen.
         int RoomOnScreen()
         {
             Screen screen = IsHandleCreated && Visible ? Screen.FromHandle(Handle) : Screen.FromPoint(Cursor.Position);
@@ -248,7 +250,7 @@ namespace KeyboardToggler
             return screen.WorkingArea.Height - frame - Theme.S(48);
         }
 
-        // After growing, the window moves up if its bottom went off the screen.
+        // If the height of the window increases and its bottom edge goes below the bottom of the screen area, this moves the window up.
         void KeepOnScreen()
         {
             if (!IsHandleCreated || !Visible || WindowState != FormWindowState.Normal) return;
@@ -293,8 +295,9 @@ namespace KeyboardToggler
         const TextFormatFlags LineFlags = TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix | TextFormatFlags.NoPadding;
         static int LineHeight(Font f) { return TextRenderer.MeasureText("Ag", f, Size.Empty, LineFlags).Height; }
 
-        // Width the text draws at. TextRenderer.MeasureText reports a line about half an em wider than that, even with
-        // NoPadding; the surplus is the same for any text in a font, so it cancels out when the text is doubled.
+        // The width of the text on the screen. TextRenderer.MeasureText gives a width that is approximately 0.5 em too large.
+        // This also occurs with NoPadding. This error is the same for all text in a font. Thus the width of two copies of the text, minus the
+        // width of one copy, is the correct width.
         static int TextWidth(string s, Font f)
         {
             if (string.IsNullOrEmpty(s)) return 0;
@@ -303,17 +306,18 @@ namespace KeyboardToggler
 
         // ---- the parts of the window ----
 
-        // A Windows 11 settings card: Layer fill, 1 px Divider outline, 8 px corners, the keyboard pictogram on the left.
+        // A Windows 11 settings card. It has the Layer color, a 1 px edge of the Divider color, 8 px corners and the keyboard
+        // icon on the left side.
         class CardBase : Control, IThemed
         {
-            protected bool GlyphOff;   // the pictogram gets the red "off" badge: the keyboard is switched off right now
+            protected bool GlyphOff;   // true: the icon shows the red "off" badge, because the keyboard is off at this time
 
             public CardBase()
             {
                 SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
                 SetStyle(ControlStyles.Selectable, false);
                 TabStop = false;
-                BackColor = Theme.Layer;   // what the controls on the card paint behind themselves
+                BackColor = Theme.Layer;   // the controls on the card show this color behind them
             }
 
             public void ApplyTheme() { BackColor = Theme.Layer; Invalidate(true); }
@@ -335,13 +339,14 @@ namespace KeyboardToggler
             }
         }
 
-        // One keyboard: name with badges, hardware ID below, "Switch off" toggle on the right.
+        // The card for one keyboard. It shows the name with badges, the hardware ID below the name, and the "Deactivate"
+        // toggle on the right side.
         sealed class KeyboardCard : CardBase
         {
-            public readonly SwitchToggle Toggle = new SwitchToggle { Text = "Switch off" };
+            public readonly SwitchToggle Toggle = new SwitchToggle { Text = "Deactivate" };
             readonly TextBlock name = new TextBlock { Font = Theme.BodyStrong, Wrap = false };
             readonly TextBlock id = new TextBlock { Font = Theme.Caption, Role = TextRole.Secondary, Wrap = false };
-            readonly Badge builtIn = new Badge { Text = "Built in" };
+            readonly Badge builtIn = new Badge { Text = "Internal" };
             readonly Badge typedOn = new Badge { Text = "Your external keyboard" };
             bool hasBuiltIn, hasTypedOn;
 
@@ -357,8 +362,8 @@ namespace KeyboardToggler
                 hasBuiltIn = info.BuiltIn;
                 hasTypedOn = info.TypedOn;
                 Toggle.Checked = info.SwitchedOff;
-                Toggle.AccessibleName = "Switch off " + name.Text;
-                Toggle.AccessibleDescription = (hasBuiltIn ? "Built in. " : "") + (hasTypedOn ? "Your external keyboard. " : "") + id.Text;
+                Toggle.AccessibleName = "Deactivate " + name.Text;
+                Toggle.AccessibleDescription = (hasBuiltIn ? "Internal. " : "") + (hasTypedOn ? "Your external keyboard. " : "") + id.Text;
                 GlyphOff = keyboardIsOff && info.SwitchedOff;
                 LayoutContent();
                 Invalidate();
@@ -368,8 +373,9 @@ namespace KeyboardToggler
             {
                 int left = Theme.S(56), right = Theme.S(16);
 
-                // FluentToggle draws its label with GDI padding (it needs the full padded width, or it gets an ellipsis)
-                // and its track SF(3) inside its right edge, which lines up with the card's padding.
+                // FluentToggle shows its label with GDI padding. If the label does not have the full width with padding, it
+                // gets an ellipsis. FluentToggle puts its track SF(3) to the left of its right edge. This aligns the track
+                // with the padding of the card.
                 int toggleW = TextRenderer.MeasureText(Toggle.Text, Toggle.Font, Size.Empty, TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix).Width
                     + Theme.S(12) + Theme.S(43) + 2;
                 Toggle.Bounds = new Rectangle(Width - right + Theme.S(3) - toggleW, (Height - Theme.S(32)) / 2, toggleW, Theme.S(32));
@@ -387,8 +393,9 @@ namespace KeyboardToggler
                 }
                 if (badges.Count > 1) badgesW += (badges.Count - 1) * badgeGap;
 
-                // Badges follow the name. The name matters most, so when they don't fit beside it they move down in
-                // front of the hardware ID, which is cut short instead (it's in "Copy details" in full).
+                // The badges follow the name. The name is the most important text. If the badges do not have space
+                // adjacent to the name, they move down to the left side of the hardware ID. Then the hardware ID becomes
+                // shorter (the full ID is in the "Copy report" text).
                 int nameGap = Theme.S(8), nameW = Math.Min(TextWidth(name.Text, name.Font) + 1, avail);
                 bool badgesBelow = badges.Count > 0 && nameW + nameGap + badgesW > avail;
                 int nameH = LineHeight(name.Font), idH = LineHeight(id.Font);
@@ -400,17 +407,17 @@ namespace KeyboardToggler
                 int by = badgesBelow ? line2 + (line2H - badgeH) / 2 : top + (nameH - badgeH) / 2;
                 foreach (Badge b in badges) { b.Location = new Point(x, by); x += b.Width + badgeGap; }
                 int idLeft = badgesBelow ? x - badgeGap + nameGap : left, idW = textRight - idLeft;
-                if (idW < Theme.S(48)) idW = 0;   // a few characters and an ellipsis would say nothing
+                if (idW < Theme.S(48)) idW = 0;   // a small number of characters and an ellipsis do not give data
                 id.Bounds = new Rectangle(idLeft, line2 + (line2H - idH) / 2, idW, idH);
                 builtIn.Visible = hasBuiltIn;
                 typedOn.Visible = hasTypedOn;
             }
         }
 
-        // Shown instead of the cards when there are none.
+        // The window shows this card when there are no keyboard cards.
         sealed class EmptyCard : CardBase
         {
-            readonly TextBlock text = new TextBlock { Role = TextRole.Secondary, Wrap = false, Text = "No keyboards found." };
+            readonly TextBlock text = new TextBlock { Role = TextRole.Secondary, Wrap = false, Text = "Keyboard Toggler cannot find a keyboard." };
 
             public EmptyCard() { Controls.Add(text); }
 
@@ -422,7 +429,7 @@ namespace KeyboardToggler
             }
         }
 
-        // A small rounded tag after a keyboard's name, e.g. "Built in".
+        // A small badge after the name of a keyboard, for example "Internal". The badge has a curve at each corner.
         sealed class Badge : Control
         {
             public Badge()
@@ -457,27 +464,28 @@ namespace KeyboardToggler
                     LineFlags | TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
             }
 
-            // The subtle control fill. In light mode that fill is white on a white card, so there it's a faint tint
-            // of the text colour instead (Windows 11's subtle secondary fill).
+            // The color of the badge. In dark mode, it is the control color of Windows 11 (Theme.ControlFill). In light mode,
+            // that color is white on a white card. Thus in light mode, this mixes 6% of the text color with the card color
+            // (SubtleFillColorSecondary of Windows 11).
             static Color Fill(Color back)
             {
                 return Theme.Dark ? Theme.ControlFill(back, false, false) : Theme.Blend(Theme.Text, back, 0.06f);
             }
         }
 
-        // A FluentButton with an icon-font glyph before its label. (FluentButton.GlyphText measures the label with
-        // EndEllipsis and no width, which comes back as just the ellipsis, so longer labels like "Copy details" get
-        // cut short.) FluentButton still paints the fill, border and focus ring; its Text stays empty and this draws
-        // the glyph and label, centred together.
+        // A FluentButton with an icon-font glyph on the left side of its label. FluentButton.GlyphText measures the label
+        // with EndEllipsis and a width of 0. The result is only the ellipsis. Thus FluentButton makes long labels such as
+        // "Copy report" too short. FluentButton shows the button color, the edge and the focus ring. Its Text stays
+        // empty. This class shows the glyph and the label together in the center.
         sealed class GlyphButton : FluentButton
         {
             string label = "", symbol = "";
-            bool pressed;   // mirrors FluentButton's own pressed state, for the label colour
+            bool pressed;   // a copy of the pressed state of FluentButton, for the label color
 
             public string Label { get { return label; } set { label = value ?? ""; AccessibleName = label; Invalidate(); } }
             public string Symbol { get { return symbol; } set { symbol = value ?? ""; Invalidate(); } }
 
-            // Width that fits the glyph and the given label, with the same side padding FluentButton ends up with.
+            // The width for the glyph and the given label, with the same side padding as FluentButton.
             public int WidthFor(string text) { return Theme.S(16 + 16 + 8 + 16) + TextWidth(text, Font); }
 
             protected override void OnMouseDown(MouseEventArgs e) { if (e.Button == MouseButtons.Left) pressed = true; base.OnMouseDown(e); }
@@ -503,7 +511,8 @@ namespace KeyboardToggler
             }
         }
 
-        // A FluentToggle that takes the focus when clicked, and tells screen readers it's a check button and whether it's on.
+        // A FluentToggle that gets the focus when you click it. It also tells screen readers that it is a check button,
+        // and if it is on.
         sealed class SwitchToggle : FluentToggle
         {
             public SwitchToggle()
@@ -511,7 +520,8 @@ namespace KeyboardToggler
                 CheckedChanged += (s, e) => { if (IsHandleCreated) AccessibilityNotifyClients(AccessibleEvents.StateChange, -1); };
             }
 
-            // FluentToggle keeps the focus where it was on a click, so Space would then press the focused button (Close).
+            // On a click, FluentToggle does not move the focus. Then, if you push Space, the button that has the focus (Close)
+            // operates.
             protected override void OnMouseDown(MouseEventArgs e)
             {
                 if (e.Button == MouseButtons.Left && CanFocus) Focus();
@@ -536,7 +546,7 @@ namespace KeyboardToggler
                     }
                 }
 
-                public override string DefaultAction { get { return "Toggle"; } }
+                public override string DefaultAction { get { return "Change"; } }
 
                 public override void DoDefaultAction()
                 {
@@ -546,7 +556,7 @@ namespace KeyboardToggler
             }
         }
 
-        // The scrolling part of the window. Its scroll bar follows the theme (uxtheme's dark Explorer style in dark mode).
+        // The part of the window that scrolls. Its scroll bar uses the theme (the DarkMode_Explorer theme of uxtheme in dark mode).
         sealed class ScrollArea : Panel, IThemed
         {
             public ScrollArea()
@@ -580,8 +590,8 @@ namespace KeyboardToggler
                 catch (EntryPointNotFoundException) { }
             }
 
-            // Tabbing to a toggle scrolls its whole card into view (and the end padding after the last card). A click
-            // scrolls nothing, so the toggle can't move away from under the pointer before the click lands.
+            // When you use Tab to go to a toggle, this scrolls its full card into view (and the end padding after the last
+            // card). A click does not scroll the list. Thus the toggle cannot move away from the pointer before the click.
             protected override Point ScrollToControl(Control active)
             {
                 Point at = DisplayRectangle.Location;

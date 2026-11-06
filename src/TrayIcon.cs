@@ -8,17 +8,18 @@ using KeyboardToggler.Ui;
 
 namespace KeyboardToggler
 {
-    // The notification-area icon in the Windows 11 style: the keyboard glyph in the taskbar's text colour, like
-    // the system's own tray icons (white on a dark taskbar, near-black on a light one), with a status badge:
-    // a green check while the laptop keyboard is on, a red bar while it's switched off. Drawn for the tray's
-    // exact pixel size at the current DPI.
+    // This class makes the tray icon. The keyboard glyph has the same text color as the Windows 11 tray icons:
+    // white in Dark mode and almost black in Light mode. The status badge is a green check mark when the laptop
+    // keyboard is on, and a red bar when it is off. The code makes the icon for the accurate pixel dimension
+    // of the tray at the DPI of the display.
     static class TrayIcon
     {
-        // A new icon; the caller disposes it. Make new ones when the taskbar switches between light and dark.
+        // This method gives a new icon. The caller must use Dispose() on it.
+        // Make a new icon when the taskbar changes to Dark mode or to Light mode.
         public static Icon Create(bool off, bool darkTaskbar)
         {
-            Size tray = SystemInformation.SmallIconSize;   // 16 px at 100% scaling, 20 at 125%, 24 at 150%, 32 at 200%
-            Color color = darkTaskbar ? Color.White : Color.FromArgb(0xE4, 0, 0, 0);   // Windows' primary text colour on each
+            Size tray = SystemInformation.SmallIconSize;   // 16 px at 100% scale, 20 px at 125%, 24 px at 150%, 32 px at 200%
+            Color color = darkTaskbar ? Color.White : Color.FromArgb(0xE4, 0, 0, 0);   // The primary text color of Windows in each mode
             using (var bmp = KeyboardGlyph.Render(Math.Min(tray.Width, tray.Height), color, off ? GlyphBadge.Off : GlyphBadge.On))
             {
                 IntPtr h = ToHicon(bmp);
@@ -27,8 +28,8 @@ namespace KeyboardToggler
             }
         }
 
-        // Bitmap.GetHicon() stores premultiplied colours, which Windows premultiplies again when it draws the
-        // icon: anti-aliased edges of a white glyph come out dark. So build the icon from a straight-alpha DIB.
+        // Bitmap.GetHicon() keeps premultiplied colors. Windows premultiplies these colors again when it shows the icon.
+        // Thus, the anti-aliased edges of a white glyph become gray. This method makes the icon from a straight-alpha DIB.
         static IntPtr ToHicon(Bitmap bmp)
         {
             int n = bmp.Width;
@@ -39,8 +40,8 @@ namespace KeyboardToggler
 
             var header = new BITMAPINFOHEADER { biSize = 40, biWidth = n, biHeight = -n, biPlanes = 1, biBitCount = 32 };
             IntPtr bits, color = CreateDIBSection(IntPtr.Zero, ref header, 0, out bits, IntPtr.Zero, 0);
-            int stride = (n + 15) / 16 * 2;                       // the 1 bpp mask has 16-bit aligned rows
-            var maskBits = new byte[stride * n];                  // 1 = transparent, for anything that ignores alpha
+            int stride = (n + 15) / 16 * 2;                       // Each row of the 1 bpp mask is aligned to 16 bits
+            var maskBits = new byte[stride * n];                  // 1 = you can see through the pixel (for code that does not use alpha)
             for (int i = 0; i < argb.Length; i++)
                 if ((argb[i] >> 24) == 0) maskBits[i / n * stride + i % n / 8] |= (byte)(0x80 >> (i % n % 8));
             IntPtr mask = CreateBitmap(n, n, 1, 1, maskBits);

@@ -1,8 +1,9 @@
-# Build output (rebuild with build.cmd; release binaries go on the GitHub Releases page)
+# Build output. To make it again, use build.cmd.
+# The installers that we release are on the GitHub Releases page.
 build/
 dist/
 
-# Editors / OS
+# Files that editors and Windows make
 .vs/
 .vscode/
 *.user

@@ -25,7 +25,7 @@ namespace KeyboardToggler
                 if (!first) return;
                 Application.EnableVisualStyles();
                 Application.SetCompatibleTextRenderingDefault(false);
-                Application.ThreadException += (s, e) => Log.Write("UI exception: " + e.Exception);
+                Application.ThreadException += (s, e) => Log.Write("UI error: " + e.Exception);
                 using (var app = new TrayApp()) Application.Run(app);
             }
         }
@@ -54,7 +54,8 @@ namespace KeyboardToggler
     sealed class TrayApp : ApplicationContext, IKeyboardHost
     {
         static readonly string LearnedFile = Path.Combine(Log.Dir, "external-keyboards.txt");
-        // Per-keyboard overrides of the built-in detection: "+<hardware id>" = switch it off too, "-<hardware id>" = never.
+        // This file keeps the manual selections that override the automatic selection.
+        // "+<hardware id>" = deactivate this keyboard also. "-<hardware id>" = do not deactivate this keyboard.
         static readonly string ChoiceFile = Path.Combine(Log.Dir, "laptop-keyboards.txt");
         static readonly Regex Revision = new Regex(@"&REV_[^&\\]*", RegexOptions.IgnoreCase);
 
@@ -76,7 +77,7 @@ namespace KeyboardToggler
 
         public TrayApp()
         {
-            Log.Write("started");
+            Log.Write("Keyboard Toggler started");
             try { foreach (var l in File.ReadAllLines(LearnedFile)) if (l.Trim() != "") learned.Add(l.Trim()); } catch { }
             try
             {
@@ -92,26 +93,26 @@ namespace KeyboardToggler
             try
             {
                 blocker = new Blocker { Hotkey = shortcut };
-                blocker.HotkeyPressed += () => win.BeginInvoke((Action)(() => TurnOn("shortcut")));
+                blocker.HotkeyPressed += () => win.BeginInvoke((Action)(() => TurnOn("you typed the shortcut")));
             }
-            catch (Exception ex) { Log.Write("blocker unavailable: " + ex.Message); blocker = null; }
+            catch (Exception ex) { Log.Write("cannot open the Interception driver: " + ex.Message); blocker = null; }
 
             win = new MsgWindow(this);
             bool shortcutOk = win.RegisterShortcut(shortcut);
-            if (!shortcutOk) Log.Write("shortcut " + shortcut + " is taken by another app");
+            if (!shortcutOk) Log.Write("the shortcut " + shortcut + " is not available because a different app uses it");
 
-            // Windows' own menu, so it looks and behaves like the rest of Windows 11 (rounded corners, dark mode, DPI).
-            toggleItem = new MenuItem("", (s, e) => Toggle()) { DefaultItem = true };   // bold: what a left-click does
-            startupItem = new MenuItem("Start with Windows", (s, e) => SetStartup(!startupItem.Checked));
-            if (blocker == null) menu.MenuItems.Add(new MenuItem("The keyboard driver isn't running") { Enabled = false });
+            // This is a Windows menu. Thus, it agrees with the other Windows 11 menus (rounded corners, dark mode, DPI).
+            toggleItem = new MenuItem("", (s, e) => Toggle()) { DefaultItem = true };   // If you click the tray icon, Keyboard Toggler does the same step as this bold item.
+            startupItem = new MenuItem("Start when you sign in", (s, e) => SetStartup(!startupItem.Checked));
+            if (blocker == null) menu.MenuItems.Add(new MenuItem("The Interception driver is not available") { Enabled = false });
             menu.MenuItems.Add(toggleItem);
             menu.MenuItems.Add("-");
             menu.MenuItems.Add("Keyboards\u2026", (s, e) => ShowKeyboards());
-            menu.MenuItems.Add("Change shortcut\u2026", (s, e) => ChangeShortcut());
+            menu.MenuItems.Add("Change the shortcut\u2026", (s, e) => ChangeShortcut());
             menu.MenuItems.Add(startupItem);
-            menu.MenuItems.Add("Open log folder", (s, e) => OpenLogFolder());
+            menu.MenuItems.Add("Open the log folder", (s, e) => OpenLogFolder());
             menu.MenuItems.Add("-");
-            menu.MenuItems.Add("Exit", (s, e) => ExitThread());
+            menu.MenuItems.Add("Stop Keyboard Toggler", (s, e) => ExitThread());
             menu.Popup += (s, e) => { startupItem.Checked = IsStartup(); UpdateUi(); };
 
             tray.ContextMenu = menu;
@@ -124,36 +125,37 @@ namespace KeyboardToggler
 
             poll.Tick += (s, e) => CheckExternal();
             poll.Start();
-            SystemEvents.SessionEnding += (s, e) => TurnOn("sign-out/shutdown");
+            SystemEvents.SessionEnding += (s, e) => TurnOn("Windows sign-out or shutdown");
 
             if (blocker != null && !shortcutOk)
-                Balloon("Shortcut unavailable",
-                    shortcut + " is already used by another app. Right-click the tray icon and choose \"Change shortcut\".", ToolTipIcon.Warning);
+                Balloon("The shortcut is not available",
+                    shortcut + " is not available because a different app uses it. Right-click the tray icon. Then select \"Change the shortcut\".", ToolTipIcon.Warning);
             if (blocker == null)
-                Balloon("Interception driver not found",
-                    "Keyboard Toggler needs the Interception driver. Reinstall Keyboard Toggler and restart Windows.", ToolTipIcon.Error);
+                Balloon("The Interception driver is not available",
+                    "The Interception driver is necessary for Keyboard Toggler. Install Keyboard Toggler again. Then start Windows again.", ToolTipIcon.Error);
         }
 
         bool Off { get { return blocker != null && blocker.Blocking; } }
 
-        void Toggle() { if (Off) TurnOn("tray click"); else TurnOff(); }
+        void Toggle() { if (Off) TurnOn("you clicked the tray icon"); else TurnOff(); }
 
-        // The toggle shortcut, typed on a keyboard that isn't blocked (the blocked one only ever turns back on).
-        internal void OnShortcut() { if (Off) TurnOn("shortcut"); else TurnOff(); }
+        // MsgWindow starts this procedure when you type the shortcut on a keyboard that is on.
+        // If you type the shortcut on the laptop keyboard while it is off, Blocker.HotkeyPressed activates the laptop keyboard.
+        internal void OnShortcut() { if (Off) TurnOn("you typed the shortcut"); else TurnOff(); }
 
         void ChangeShortcut()
         {
-            win.UnregisterShortcut(); // so pressing the current shortcut in the dialog doesn't toggle
+            win.UnregisterShortcut(); // Thus, if you type your shortcut in the dialog, the laptop keyboard does not change.
             using (var dlg = new ShortcutDialog(shortcut, win.RegisterShortcut))
             {
                 if (dlg.ShowDialog() == DialogResult.OK && dlg.Result != null)
                 {
                     shortcut = dlg.Result;
                     if (blocker != null) blocker.Hotkey = shortcut;
-                    try { shortcut.Save(); } catch (Exception ex) { Log.Write("saving shortcut: " + ex.Message); }
-                    Log.Write("shortcut set to " + shortcut);
+                    try { shortcut.Save(); } catch (Exception ex) { Log.Write("cannot save the shortcut: " + ex.Message); }
+                    Log.Write("new shortcut: " + shortcut);
                 }
-                else if (!win.RegisterShortcut(shortcut)) Log.Write("shortcut " + shortcut + " is taken by another app");
+                else if (!win.RegisterShortcut(shortcut)) Log.Write("the shortcut " + shortcut + " is not available because a different app uses it");
             }
             UpdateUi();
         }
@@ -162,18 +164,18 @@ namespace KeyboardToggler
         {
             if (blocker == null)
             {
-                Notice.Show(null, NoticeKind.Error, "The keyboard driver isn't running",
-                    "Keyboard Toggler needs the Interception driver to switch the laptop keyboard off. Reinstall Keyboard Toggler, then restart Windows.");
+                Notice.Show(null, NoticeKind.Error, "The Interception driver is not available",
+                    "The Interception driver is necessary to deactivate the laptop keyboard. Install Keyboard Toggler again. Then start Windows again.");
                 return;
             }
             if (!ExternalPresent())
             {
                 if (learned.Count == 0)
                     Notice.Show(null, NoticeKind.Info, "Type on your external keyboard first",
-                        "Press any key on your external keyboard once, then try again. That's how Keyboard Toggler knows which keyboard is yours.");
+                        "Push a key on your external keyboard one time. Then try again. This lets Keyboard Toggler know which keyboard is your external keyboard.");
                 else
-                    Notice.Show(null, NoticeKind.Info, "No external keyboard connected",
-                        "The laptop keyboard stays on until one of your external keyboards is connected. If it's a new keyboard, press a key on it once, then try again.");
+                    Notice.Show(null, NoticeKind.Info, "No external keyboard is connected",
+                        "The laptop keyboard stays on until you connect one of your external keyboards. If the keyboard is new, push a key on it one time. Then try again.");
                 return;
             }
             int n;
@@ -181,19 +183,19 @@ namespace KeyboardToggler
             try { n = blocker.Start(id => IsTarget(id, present)); }
             catch (Exception ex)
             {
-                Log.Write("start failed: " + ex);
-                Notice.Show(null, NoticeKind.Error, "Couldn't switch off the laptop keyboard", ex.Message);
+                Log.Write("cannot deactivate the laptop keyboard: " + ex);
+                Notice.Show(null, NoticeKind.Error, "Keyboard Toggler cannot deactivate the laptop keyboard", ex.Message);
                 return;
             }
             if (n == 0)
             {
-                Log.Write("no laptop keyboard among: " + string.Join(" | ", blocker.Keyboards().Values));
-                if (Notice.Show(null, NoticeKind.Warning, "Couldn't find the laptop keyboard",
-                        "Choose your laptop's keyboard in the Keyboards window, then try again.", "Choose keyboard", "Cancel") == 0)
+                Log.Write("cannot find the laptop keyboard. Interception keyboards: " + string.Join(" | ", blocker.Keyboards().Values));
+                if (Notice.Show(null, NoticeKind.Warning, "Keyboard Toggler cannot find the laptop keyboard",
+                        "Select the laptop keyboard in the Keyboards window. Then try again.", "Select keyboard", "Cancel") == 0)
                     ShowKeyboards();
                 return;
             }
-            Log.Write("laptop keyboard OFF");
+            Log.Write("the laptop keyboard is OFF");
             UpdateUi();
 
             prompt = new KeepOffPrompt(15);
@@ -201,7 +203,7 @@ namespace KeyboardToggler
             {
                 var p = (KeepOffPrompt)s;
                 if (p == prompt) prompt = null;
-                if (!p.Kept) TurnOn(p.TimedOut ? "no confirmation within 15 s" : "chose turn back on");
+                if (!p.Kept) TurnOn(p.TimedOut ? "you did not select \"Keep it off\" in 15 s" : "you selected \"Activate it\"");
             };
             prompt.Show();
         }
@@ -210,24 +212,24 @@ namespace KeyboardToggler
         {
             if (!Off) return;
             blocker.Stop();
-            Log.Write("laptop keyboard ON (" + why + ")");
+            Log.Write("the laptop keyboard is ON (cause: " + why + ")");
             if (prompt != null) { var p = prompt; prompt = null; p.Kept = true; p.Close(); }
             UpdateUi();
-            if (why != "tray click" && why != "chose turn back on" && why != "app exit" && why != "shortcut")
-                Balloon("Laptop keyboard is back on", "Reason: " + why, ToolTipIcon.Info);
+            if (why != "you clicked the tray icon" && why != "you selected \"Activate it\"" && why != "Keyboard Toggler stopped" && why != "you typed the shortcut")
+                Balloon("The laptop keyboard is on again", "Cause: " + why, ToolTipIcon.Info);
         }
 
         void UpdateUi()
         {
             bool off = Off;
-            if (off != shownOff && keyboardsWindow != null && !keyboardsWindow.IsDisposed) keyboardsWindow.Reload();   // its "off right now" note
+            if (off != shownOff && keyboardsWindow != null && !keyboardsWindow.IsDisposed) keyboardsWindow.Reload();   // The window shows a note when the laptop keyboard is off.
             shownOff = off;
             tray.Icon = off ? iconOff : iconOn;
-            tray.Text = off ? "Laptop keyboard is off\nClick to turn it back on" : "Laptop keyboard is on\nClick to turn it off";
-            toggleItem.Text = (off ? "Turn laptop keyboard on" : "Turn laptop keyboard off") + "\t" + shortcut;   // tab: right-aligned shortcut
+            tray.Text = off ? "The laptop keyboard is off\nClick to activate it" : "The laptop keyboard is on\nClick to deactivate it";
+            toggleItem.Text = (off ? "Activate the laptop keyboard" : "Deactivate the laptop keyboard") + "\t" + shortcut;   // \t puts the shortcut on the right side of the menu.
         }
 
-        // Tray icons in the Windows 11 style: white on a dark taskbar, black on a light one.
+        // This procedure makes the tray icons for Windows 11. The icons are white in dark mode and black in light mode.
         void MakeIcons()
         {
             Icon oldOn = iconOn, oldOff = iconOff;
@@ -238,7 +240,7 @@ namespace KeyboardToggler
             if (oldOff != null) oldOff.Dispose();
         }
 
-        // Light/dark mode or accent colour changed (may be raised on another thread).
+        // Windows changed to light mode or dark mode, or the accent color changed. Theme.Changed can occur on a different thread.
         void ThemeChanged()
         {
             win.BeginInvoke(() => { DarkMenus.Apply(); MakeIcons(); UpdateUi(); });
@@ -256,10 +258,10 @@ namespace KeyboardToggler
             tray.ShowBalloonTip(5000);
         }
 
-        // ---- which keyboards are "the laptop keyboard" ----
+        // ---- The keyboards that are "the laptop keyboard" ----
 
-        // Built in = Windows places it in the computer's own container (PS/2, I2C and internal-USB keyboards alike).
-        // Keyboards Windows can't describe fall back to the classic PS/2 IDs.
+        // Internal = Windows puts the keyboard in the device container of the PC (PS/2, I2C and internal USB keyboards).
+        // If Windows does not give data about a keyboard, Keyboard Toggler compares its hardware ID with the PS/2 IDs.
         static bool AutoBuiltIn(string hardwareId, List<KeyboardDevice> present)
         {
             bool known = false;
@@ -285,12 +287,12 @@ namespace KeyboardToggler
         {
             forceOn.Remove(hardwareId); forceOff.Remove(hardwareId);
             if (on != AutoBuiltIn(hardwareId, Devices.PresentKeyboards())) (on ? forceOn : forceOff).Add(hardwareId);
-            Log.Write((on ? "switch off with laptop keyboard: " : "never switch off: ") + hardwareId);
+            Log.Write((on ? "deactivate with the laptop keyboard: " : "do not deactivate: ") + hardwareId);
             ChoicesChanged();
         }
 
-        // Saves the keyboard choices and, if the laptop keyboard is off, applies them right away:
-        // re-filter with the new choice, or turn back on if nothing is left to block.
+        // This procedure saves the keyboard selection. If the laptop keyboard is off, the selection has an effect immediately.
+        // Blocker deactivates the selected keyboards again. If no keyboard is selected, the laptop keyboard is on again.
         void ChoicesChanged()
         {
             try
@@ -298,21 +300,21 @@ namespace KeyboardToggler
                 Directory.CreateDirectory(Log.Dir);
                 File.WriteAllLines(ChoiceFile, forceOn.Select(h => "+" + h).Concat(forceOff.Select(h => "-" + h)).ToArray());
             }
-            catch (Exception ex) { Log.Write("saving keyboard choice: " + ex.Message); }
+            catch (Exception ex) { Log.Write("cannot save the keyboard selection: " + ex.Message); }
             rawDevices.Clear();
             if (!Off) return;
             blocker.Stop();
             var present = Devices.PresentKeyboards();
             if (blocker.Start(id => IsTarget(id, present)) == 0)
             {
-                Log.Write("laptop keyboard ON (no keyboard selected)");
+                Log.Write("the laptop keyboard is ON (cause: no keyboard is selected)");
                 if (prompt != null) { var p = prompt; prompt = null; p.Kept = true; p.Close(); }
                 UpdateUi();
             }
             else CheckExternal();
         }
 
-        // ---- the Keyboards window (IKeyboardHost) ----
+        // ---- The Keyboards window (IKeyboardHost) ----
 
         void ShowKeyboards()
         {
@@ -346,11 +348,11 @@ namespace KeyboardToggler
 
         bool IKeyboardHost.HasManualChoices { get { return forceOn.Count + forceOff.Count > 0; } }
 
-        // All at once, so the result doesn't depend on the order the choices are undone in.
+        // This procedure removes all manual selections at the same time. Thus, the sequence of the removal has no effect on the result.
         void IKeyboardHost.ResetToAutomatic()
         {
             forceOn.Clear(); forceOff.Clear();
-            Log.Write("keyboard choices reset to automatic");
+            Log.Write("you set the keyboard selection to automatic");
             ChoicesChanged();
         }
 
@@ -358,12 +360,12 @@ namespace KeyboardToggler
 
         bool IKeyboardHost.KeyboardIsOff { get { return Off; } }
 
-        // ---- external keyboard tracking ----
+        // ---- External keyboards that you typed on ----
 
-        // Keyboards are remembered by hardware ID without the firmware revision, so a firmware update doesn't forget them.
+        // Keyboard Toggler records the hardware ID without the firmware revision (REV_). Thus, Keyboard Toggler can find the keyboard after a firmware update.
         static string LearnKey(string hardwareId) { return Revision.Replace(hardwareId, "").ToUpperInvariant(); }
 
-        // Learned entries from 2.0.x are just "VID_xxxx&PID_yyyy"; they still match by containment.
+        // Entries from version 2.0.x have only "VID_xxxx&PID_yyyy". If a hardware ID contains the entry, IsLearned gives true.
         bool IsLearned(string hardwareId)
         {
             string key = LearnKey(hardwareId);
@@ -372,10 +374,11 @@ namespace KeyboardToggler
             return false;
         }
 
-        // Called for every raw keystroke; remembers which non-laptop keyboards are actually used for typing.
+        // MsgWindow starts this procedure for each WM_INPUT message. It records each external keyboard that you type on.
         internal void OnRawKey(string deviceName)
         {
-            // Cached per device, so a keystroke doesn't rescan the device tree; cleared on device changes.
+            // rawDevices keeps the result for each device. Thus, Keyboard Toggler does not examine the device tree each time that you push a key.
+            // OnDeviceChange and ChoicesChanged remove all entries from rawDevices.
             KeyboardDevice d;
             if (!rawDevices.TryGetValue(deviceName, out d))
             {
@@ -386,12 +389,12 @@ namespace KeyboardToggler
             if (d == null) return;
             if (!IsLearned(d.HardwareId) && learned.Add(LearnKey(d.HardwareId)))
             {
-                Log.Write("learned external keyboard " + LearnKey(d.HardwareId) + " (" + d.Name + ")");
+                Log.Write("Keyboard Toggler recorded a new external keyboard: " + LearnKey(d.HardwareId) + " (" + d.Name + ")");
                 try { Directory.CreateDirectory(Log.Dir); File.WriteAllLines(LearnedFile, learned.ToArray()); } catch { }
             }
         }
 
-        // An external keyboard you've typed on is connected (and isn't one of the keyboards being switched off).
+        // This procedure gives true if a keyboard that you typed on is connected, and Keyboard Toggler does not deactivate that keyboard.
         bool ExternalPresent()
         {
             var present = Devices.PresentKeyboards();
@@ -400,7 +403,7 @@ namespace KeyboardToggler
 
         internal void CheckExternal()
         {
-            if (Off && !ExternalPresent()) TurnOn("external keyboard disconnected");
+            if (Off && !ExternalPresent()) TurnOn("no external keyboard is connected");
         }
 
         internal void OnDeviceChange()
@@ -410,7 +413,7 @@ namespace KeyboardToggler
             if (keyboardsWindow != null && !keyboardsWindow.IsDisposed) keyboardsWindow.Reload();
         }
 
-        // The plain-text report behind "Copy details" (and logged when the Keyboards window opens).
+        // This procedure makes the plain-text report for "Copy report". Keyboard Toggler also writes it to the log when the Keyboards window opens.
         string DetectedKeyboards()
         {
             var present = Devices.PresentKeyboards();
@@ -418,19 +421,19 @@ namespace KeyboardToggler
             sb.AppendLine("Connected keyboards:");
             foreach (var d in present)
                 sb.AppendLine(string.Format("  {0} {1}{2}\r\n      {3}",
-                    IsTarget(d.HardwareId, present) ? "[laptop keyboard]" : IsLearned(d.HardwareId) ? "[external, typed on]" : "[external]",
-                    d.Name, d.Internal ? " (built in)" : "", d.HardwareId));
+                    IsTarget(d.HardwareId, present) ? "[laptop keyboard]" : IsLearned(d.HardwareId) ? "[your external keyboard]" : "[external]",
+                    d.Name, d.Internal ? " (internal)" : "", d.HardwareId));
             sb.AppendLine();
-            sb.AppendLine("Through the Interception driver:");
-            if (blocker == null) sb.AppendLine("  (driver not available)");
+            sb.AppendLine("Keyboards in the Interception driver:");
+            if (blocker == null) sb.AppendLine("  (the Interception driver is not available)");
             else foreach (var kv in blocker.Keyboards()) sb.AppendLine("  #" + kv.Key + "  " + kv.Value);
             return sb.ToString();
         }
 
-        // ---- startup ----
+        // ---- Start when you sign in ----
 
-        // Same mechanism as other apps: a Run-key entry plus its Task Manager "Startup apps" state
-        // (StartupApproved; first byte 02 = enabled, 03 = disabled), so Task Manager can switch it too.
+        // Other apps use the same procedure: an entry in the Run key, plus a StartupApproved value for "Startup apps" in Task Manager.
+        // Byte 0 of that value is 02 (Enabled) or 03 (Disabled). Thus, you can also activate or deactivate this entry in Task Manager.
         const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
         const string ApprovedKey = @"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run";
         const string RunName = "KeyboardToggler";
@@ -458,12 +461,12 @@ namespace KeyboardToggler
                 using (var ok = Registry.CurrentUser.CreateSubKey(ApprovedKey))
                     ok.SetValue(RunName, state, RegistryValueKind.Binary);
             }
-            catch (Exception ex) { Log.Write("startup setting: " + ex.Message); }
+            catch (Exception ex) { Log.Write("cannot change \"Start when you sign in\": " + ex.Message); }
         }
 
         protected override void ExitThreadCore()
         {
-            TurnOn("app exit");
+            TurnOn("Keyboard Toggler stopped");
             if (keyboardsWindow != null && !keyboardsWindow.IsDisposed) keyboardsWindow.Close();
             tray.Visible = false;
             base.ExitThreadCore();
@@ -483,8 +486,8 @@ namespace KeyboardToggler
         }
     }
 
-    // Windows' own menus only follow dark mode when the app opts in, which uxtheme exposes by ordinal only
-    // (Windows 10 1903 and later). Does nothing elsewhere.
+    // Windows menus use dark mode only if the app uses SetPreferredAppMode. uxtheme.dll gives this function only by ordinal
+    // (Windows 10 version 1903 and subsequent versions). On previous versions, Apply has no effect.
     static class DarkMenus
     {
         [DllImport("uxtheme.dll", EntryPoint = "#135")] static extern int SetPreferredAppMode(int mode);
@@ -496,15 +499,17 @@ namespace KeyboardToggler
             if (v.Major < 10 || v.Build < 18362) return;
             try
             {
-                SetPreferredAppMode(Theme.HighContrast ? 0 : Theme.Dark ? 2 : 3);   // default / force dark / force light
+                SetPreferredAppMode(Theme.HighContrast ? 0 : Theme.Dark ? 2 : 3);   // 0 = Default, 2 = ForceDark, 3 = ForceLight
                 FlushMenuThemes();
             }
             catch (EntryPointNotFoundException) { }
         }
     }
 
-    // Hidden window: raw keyboard input (to learn external keyboards), device-change notices, and the
-    // toggle shortcut as a system-wide hotkey (the keyboards that aren't being blocked).
+    // MsgWindow is a window that you cannot see. It receives these messages:
+    // - WM_INPUT (raw input), to record external keyboards
+    // - WM_DEVICECHANGE, when you connect or disconnect a device
+    // - WM_HOTKEY, when you type the shortcut on a keyboard that is on
     sealed class MsgWindow : NativeWindow
     {
         readonly TrayApp app;
@@ -513,10 +518,10 @@ namespace KeyboardToggler
             this.app = app;
             CreateHandle(new CreateParams { Caption = "KeyboardTogglerMsg" });
             var d = new[] { new Native.RAWINPUTDEVICE { UsagePage = 1, Usage = 6, Flags = 0x100 /*INPUTSINK*/, Target = Handle } };
-            if (!Native.RegisterRawInputDevices(d, 1, (uint)Marshal.SizeOf(typeof(Native.RAWINPUTDEVICE)))) Log.Write("raw input registration failed");
+            if (!Native.RegisterRawInputDevices(d, 1, (uint)Marshal.SizeOf(typeof(Native.RAWINPUTDEVICE)))) Log.Write("error in the raw input registration");
         }
 
-        // Replaces the registered shortcut; false if Windows or another app already owns that combination.
+        // This procedure replaces the shortcut for RegisterHotKey. It gives false if Windows or a different app uses the same keys.
         public bool RegisterShortcut(Hotkey h)
         {
             Native.UnregisterHotKey(Handle, 1);
@@ -527,7 +532,7 @@ namespace KeyboardToggler
 
         readonly Queue<Action> pending = new Queue<Action>();
 
-        // Thread-safe: runs the action on the UI thread.
+        // You can use this from a different thread. MsgWindow does the Action on the UI thread.
         public void BeginInvoke(Action a)
         {
             lock (pending) pending.Enqueue(a);
@@ -544,7 +549,7 @@ namespace KeyboardToggler
                         IntPtr dev = Native.RawInputDevice(m.LParam);
                         if (dev != IntPtr.Zero) app.OnRawKey(Native.DeviceName(dev));
                     }
-                    catch (Exception ex) { Log.Write("raw input: " + ex.Message); }
+                    catch (Exception ex) { Log.Write("raw input error: " + ex.Message); }
                     break;
                 case 0x0312: // WM_HOTKEY
                     Run(() => app.OnShortcut());

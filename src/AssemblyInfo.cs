@@ -2,6 +2,6 @@
 
 [assembly: AssemblyTitle("Keyboard Toggler")]
 [assembly: AssemblyProduct("Keyboard Toggler")]
-[assembly: AssemblyDescription("Switches the built-in laptop keyboard off while an external keyboard is in use.")]
+[assembly: AssemblyDescription("Keyboard Toggler deactivates the laptop keyboard while you use an external keyboard.")]
 [assembly: AssemblyVersion("2.3.0.0")]
 [assembly: AssemblyFileVersion("2.3.0.0")]

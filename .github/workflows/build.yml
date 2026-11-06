@@ -15,7 +15,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Verify vendored Interception files
+      - name: Make sure that the Interception files are correct
         shell: pwsh
         run: |
           $expected = @{
@@ -25,10 +25,10 @@ jobs:
           }
           foreach ($name in $expected.Keys) {
             $hash = (Get-FileHash "vendor/$name" -Algorithm SHA256).Hash.ToLower()
-            if ($hash -ne $expected[$name]) { throw "$name hash mismatch: $hash" }
+            if ($hash -ne $expected[$name]) { throw "$name has an incorrect SHA-256: $hash" }
           }
 
-      - name: Build installer
+      - name: Make the installer
         shell: cmd
         run: build.cmd
 

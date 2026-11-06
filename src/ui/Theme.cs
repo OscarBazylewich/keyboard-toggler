@@ -8,32 +8,32 @@ using Microsoft.Win32;
 
 namespace KeyboardToggler.Ui
 {
-    // Windows 11-style colours, fonts and window frames, shared by the app and the installer.
-    // Follows the system light/dark setting, accent colour and high-contrast mode. On Windows 10 it
-    // falls back to Segoe UI and square corners.
+    // This class has the Windows 11 colors, fonts and window frames for the app and for Setup.
+    // The theme uses the Windows color mode (light or dark), the accent color and the high contrast mode.
+    // On Windows 10, the theme uses Segoe UI, and the corners of popups are not rounded.
     static class Theme
     {
-        public static bool Dark { get; private set; }          // apps use the dark theme
-        public static bool DarkTaskbar { get; private set; }   // the taskbar (and so the tray) is dark
+        public static bool Dark { get; private set; }          // Windows apps use the dark mode
+        public static bool DarkTaskbar { get; private set; }   // the taskbar and the tray use the dark mode
         public static bool HighContrast { get; private set; }
 
-        public static Color Background { get; private set; }   // window base, dialog footers
-        public static Color Layer { get; private set; }        // content areas, cards, popups
-        public static Color Divider { get; private set; }      // 1 px separators and card outlines
+        public static Color Background { get; private set; }   // window background and dialog footers
+        public static Color Layer { get; private set; }        // areas for text and controls, cards and popups
+        public static Color Divider { get; private set; }      // 1 px lines between areas, and card borders
 
         public static Color Text { get; private set; }
         public static Color TextSecondary { get; private set; }
         public static Color TextDisabled { get; private set; }
 
-        public static Color ControlStrongBorder { get; private set; }   // toggle and checkbox outlines, off-state knob
+        public static Color ControlStrongBorder { get; private set; }   // borders of toggles and check boxes, and the knob of a toggle that is off
 
-        public static Color Accent { get; private set; }        // accent fill: main buttons, toggles, progress
+        public static Color Accent { get; private set; }        // accent color for primary buttons, toggles and progress bars
         public static Color AccentHover { get; private set; }
         public static Color AccentPressed { get; private set; }
         public static Color AccentDisabled { get; private set; }
-        public static Color OnAccent { get; private set; }      // text and glyphs on the accent fill
+        public static Color OnAccent { get; private set; }      // text and glyphs on the accent color
         public static Color OnAccentDisabled { get; private set; }
-        public static Color AccentText { get; private set; }    // accent-coloured text on Layer
+        public static Color AccentText { get; private set; }    // text in the accent color on Layer
 
         public static Color Critical { get; private set; }
         public static Color Caution { get; private set; }
@@ -46,10 +46,12 @@ namespace KeyboardToggler.Ui
         public static Font Title { get; private set; }          // 28 px semibold
         public static string IconFontFamily { get; private set; }
 
-        // System DPI / 96. Fonts are in points and scale by themselves; sizes in pixels go through S().
+        // System DPI / 96. Fonts use points, so their dimensions change with the DPI.
+        // Use S() for dimensions in pixels.
         public static float Scale { get; private set; }
 
-        // Raised after the light/dark mode, accent colour or high-contrast mode changes. May be raised on any thread.
+        // Theme sends this event after a change to the color mode, the accent color or the high contrast mode.
+        // The event can occur on a thread that is not the UI thread.
         public static event Action Changed;
 
         const string PersonalizeKey = @"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize";
@@ -63,7 +65,7 @@ namespace KeyboardToggler.Ui
             bool variable = HasFont("Segoe UI Variable Text");
             string text = variable ? "Segoe UI Variable Text" : "Segoe UI";
             string strong = variable ? "Segoe UI Variable Text Semibold" : "Segoe UI Semibold";
-            string display = variable ? "Segoe UI Variable Display Semib" : "Segoe UI Semibold";   // GDI cuts family names at 31 characters
+            string display = variable ? "Segoe UI Variable Display Semib" : "Segoe UI Semibold";   // GDI uses a maximum of 31 characters in a font family name
             Caption = new Font(text, 9f);
             Body = new Font(text, 10.5f);
             BodyStrong = new Font(strong, 10.5f);
@@ -77,7 +79,7 @@ namespace KeyboardToggler.Ui
         public static int S(float px) { return (int)Math.Round(px * Scale); }
         public static float SF(float px) { return px * Scale; }
 
-        // For screenshots and tests: force light or dark (null = follow Windows again).
+        // For screenshots and tests: set the light or dark mode (null = use the Windows mode again).
         public static void Force(bool? dark) { forcedDark = dark; signature = null; Reload(); }
 
         static void Reload()
@@ -94,7 +96,7 @@ namespace KeyboardToggler.Ui
             HighContrast = SystemInformation.HighContrast;
             Dark = forcedDark.HasValue ? forcedDark.Value : ReadDword("AppsUseLightTheme", 1) == 0;
             DarkTaskbar = ReadDword("SystemUsesLightTheme", 0) == 0;
-            Color[] p = ReadAccentPalette();   // [0] lightest ... [6] darkest
+            Color[] p = ReadAccentPalette();   // [0] is the brightest color ... [6] is the dimmest color
 
             if (HighContrast)
             {
@@ -134,7 +136,7 @@ namespace KeyboardToggler.Ui
             signature = HighContrast + "|" + Dark + "|" + DarkTaskbar + "|" + Accent.ToArgb();
         }
 
-        // Fill of a standard control (button, keycap...) drawn on the given background, Windows 11 style.
+        // This method gives the Windows 11 surface color of a standard control (button, keycap...) on the specified background.
         public static Color ControlFill(Color back, bool hover, bool pressed)
         {
             if (HighContrast) return SystemColors.ButtonFace;
@@ -142,7 +144,7 @@ namespace KeyboardToggler.Ui
             return pressed ? Blend(Rgb(0xF9F9F9), back, 0.3f) : hover ? Blend(Rgb(0xF9F9F9), back, 0.5f) : Blend(Color.White, back, 0.7f);
         }
 
-        // Outline of a standard control drawn on the given background.
+        // This method gives the border color of a standard control on the specified background.
         public static Color ControlBorder(Color back)
         {
             if (HighContrast) return SystemColors.ControlText;
@@ -180,14 +182,15 @@ namespace KeyboardToggler.Ui
             return path;
         }
 
-        // Dark or light title bar to match the theme; rounded corners and a theme-coloured outline for popups
-        // (Windows 11 rounds normal windows by itself). Does nothing where Windows doesn't support it.
+        // Sets the title bar to the dark or light mode of the theme.
+        // For popups, it also sets rounded corners and a border in the theme color.
+        // Windows 11 gives rounded corners to usual windows. If Windows does not have these attributes, this method has no effect.
         public static void ApplyFrame(IntPtr hwnd, bool popup)
         {
             try
             {
                 int dark = Dark && !HighContrast ? 1 : 0;
-                if (DwmSetWindowAttribute(hwnd, 20, ref dark, 4) != 0) DwmSetWindowAttribute(hwnd, 19, ref dark, 4);   // DWMWA_USE_IMMERSIVE_DARK_MODE (19 before 20H1)
+                if (DwmSetWindowAttribute(hwnd, 20, ref dark, 4) != 0) DwmSetWindowAttribute(hwnd, 19, ref dark, 4);   // DWMWA_USE_IMMERSIVE_DARK_MODE (Windows 10 versions before 20H1 use 19)
                 if (popup)
                 {
                     int round = 2;                                                     // DWMWCP_ROUND
@@ -215,7 +218,7 @@ namespace KeyboardToggler.Ui
 
         static Color[] ReadAccentPalette()
         {
-            // Windows' default blue, lightest to darkest.
+            // These are the standard Windows accent colors (blue), from the brightest color to the dimmest color.
             var c = new[] { Rgb(0x99EBFF), Rgb(0x4CC2FF), Rgb(0x0091F8), Rgb(0x0078D4), Rgb(0x0067C0), Rgb(0x003E92), Rgb(0x001A68) };
             try
             {
@@ -241,7 +244,7 @@ namespace KeyboardToggler.Ui
         [DllImport("dwmapi.dll")] static extern int DwmSetWindowAttribute(IntPtr hwnd, int attribute, ref int value, int size);
     }
 
-    // Icon font characters (the same in Segoe Fluent Icons and Segoe MDL2 Assets).
+    // Icon font characters. They are the same in Segoe Fluent Icons and Segoe MDL2 Assets.
     static class Glyph
     {
         public const string Keyboard = "\uE765", Info = "\uE946", Warning = "\uE7BA", Error = "\uEA39", Checkmark = "\uE73E",

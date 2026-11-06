@@ -7,33 +7,36 @@ using System.Runtime.InteropServices;
 
 namespace KeyboardToggler.Ui
 {
-    // The status badge in the keyboard pictogram's bottom-right corner.
+    // The badge in the bottom-right corner of the keyboard glyph shows the condition of the laptop keyboard.
     enum GlyphBadge
     {
         None,
-        On,    // a green check: the laptop keyboard works
-        Off,   // a red bar, like a no-entry sign: the keyboard is switched off
+        On,    // A green check mark shows that the laptop keyboard is on.
+        Off,   // A red bar, as on a no-entry sign, shows that the laptop keyboard is off.
     }
 
-    // The keyboard pictogram used by the tray icon, the app icon and the windows, in the Windows 11 (Fluent)
-    // style: a rounded outline, two staggered rows of keys and a space bar. A badge can sit in the bottom-right
-    // corner, cut out of the keyboard with a thin transparent ring like the badges on Windows' own tray icons,
-    // so the tray icon says "on" or "off" at a glance, by colour and by shape.
+    // This class gives the keyboard glyph for the tray icon, the app icon and the windows, in the Windows 11
+    // (Fluent) style. It has a rounded outline, two rows of keys and a space bar. Row 2 is a small distance to
+    // the right of row 1. A badge can be in the bottom-right corner. A thin transparent ring cuts the badge out
+    // of the keyboard, as on the tray icons of Windows. Thus the color and the shape of the badge quickly show
+    // if the laptop keyboard is on or off.
     //
-    // It's laid out afresh for the exact pixel size it's drawn at: outline, keys, space bar and badge sit on
-    // whole pixels and the keys keep an even rhythm, so it's crisp at tray sizes (16, 20, 24, 32 px...) and
-    // clean when large. It's rasterised here (exact anti-aliasing) instead of with GDI+ paths.
-    // System.Drawing only: tools\MakeIcon.cs uses it too.
+    // The code calculates the layout again for each dimension in pixels. The outline, keys, space bar and badge
+    // align with the pixel grid, and the keys have equal intervals. Thus the glyph is easy to see at the
+    // dimensions of tray icons (16, 20, 24, 32 px...) and at large dimensions. This class calculates the color
+    // of each pixel, with accurate anti-aliasing.
+    // It does not use GDI+ paths. It uses only System.Drawing, because tools\MakeIcon.cs also uses it.
     static class KeyboardGlyph
     {
-        // Saturated enough to stand out on a dark or a light taskbar, dark enough to carry a white mark.
+        // These colors show clearly on the taskbar in dark mode and in light mode. A white mark on them is easy to see.
         static readonly Color OnColor = Color.FromArgb(0x1A, 0x9A, 0x45), OffColor = Color.FromArgb(0xD7, 0x30, 0x3A);
 
-        // Draws the glyph centred in box (as a square, the smaller side of box). The ring around a badge is
-        // transparent, so whatever is behind the glyph shows through it.
+        // This method puts the glyph in the center of box. The width and the height of the glyph are equal to the
+        // shorter side of box. The ring around a badge is transparent. Thus the pixels behind the glyph show
+        // through the ring.
         public static void Draw(Graphics g, RectangleF box, Color color, GlyphBadge badge)
         {
-            // Work in device pixels so the glyph lands on the pixel grid whatever the Graphics' transform.
+            // Use device pixels. Then the glyph aligns with the pixel grid for all transforms of the Graphics object.
             var p = new[] { new PointF(box.Left, box.Top), new PointF(box.Right, box.Bottom) };
             g.TransformPoints(CoordinateSpace.Device, CoordinateSpace.World, p);
             float w = Math.Abs(p[1].X - p[0].X), h = Math.Abs(p[1].Y - p[0].Y);
@@ -55,7 +58,8 @@ namespace KeyboardToggler.Ui
             }
         }
 
-        // The glyph on a transparent size x size bitmap with straight (not premultiplied) alpha, for icons.
+        // This method gives the glyph on a transparent size x size bitmap, for icons. The bitmap uses straight
+        // alpha, not premultiplied alpha.
         public static Bitmap Render(int size, Color color, GlyphBadge badge = GlyphBadge.None)
         {
             var layout = new Layout(size, badge != GlyphBadge.None);
@@ -70,7 +74,7 @@ namespace KeyboardToggler.Ui
                 {
                     for (int px = 0; px < size; px++)
                     {
-                        float a = 0, r = 0, g = 0, b = 0;   // premultiplied
+                        float a = 0, r = 0, g = 0, b = 0;   // premultiplied values
                         Over(ref a, ref r, ref g, ref b, color, Cover(layout.Keyboard, px, py));
                         if (badge != GlyphBadge.None)
                         {
@@ -86,7 +90,8 @@ namespace KeyboardToggler.Ui
             return bmp;
         }
 
-        // Paints colour c at coverage over what's there (premultiplied, values 0-1).
+        // This method puts color c, with the given coverage, on the color that is there (premultiplied values
+        // from 0 to 1).
         static void Over(ref float a, ref float r, ref float g, ref float b, Color c, float coverage)
         {
             float k = coverage * c.A / 255f;
@@ -99,15 +104,16 @@ namespace KeyboardToggler.Ui
 
         static int Byte(float v) { return Math.Max(0, Math.Min(255, (int)Math.Round(v * 255))); }
 
-        // Signed distance to a shape in pixels (negative inside; a lower bound away from the edges).
+        // A Field gives the signed distance to a shape, in pixels. In the shape, the value is less than 0. Away
+        // from the edges, the value can be less than the correct distance.
         delegate float Field(float x, float y);
 
-        // Fraction of pixel (px, py) inside the shape: exact box-filter anti-aliasing, supersampled where an
-        // edge crosses the pixel.
+        // This method gives the proportion of pixel (px, py) that is in the shape. This is accurate box-filter
+        // anti-aliasing, with supersampling where an edge is across the pixel.
         static float Cover(Field f, int px, int py)
         {
             float d = f(px + 0.5f, py + 0.5f);
-            if (d >= 0.75f) return 0;      // the whole pixel is outside (0.75 > half its diagonal)
+            if (d >= 0.75f) return 0;      // All parts of the pixel are out of the shape, because 0.75 is more than 1/2 of the pixel diagonal.
             if (d <= -0.75f) return 1;
             const int S = 8;
             int hits = 0;
@@ -117,17 +123,18 @@ namespace KeyboardToggler.Ui
             return hits / (float)(S * S);
         }
 
-        // The glyph's shapes in pixels for an n x n box. Proportions follow the Windows 11 keyboard icon
-        // (on its 16 px grid: body 16 x 11, 1 px outline, keys on a 3 px pitch, space bar 10 x 1), with every
-        // part snapped to whole pixels for this size.
+        // This class gives the shapes of the glyph in pixels for an n x n box. The proportions are the same as
+        // the proportions of the Windows 11 keyboard icon. On its 16 px grid, the keyboard is 16 x 11, the
+        // outline is 1 px, the key pitch is 3 px and the space bar is 10 x 1. Each part aligns with the pixel
+        // grid for this value of n.
         sealed class Layout
         {
-            readonly float left, top, right, bottom, stroke, radius;   // body outline, outer edge
+            readonly float left, top, right, bottom, stroke, radius;   // the outer edge of the keyboard outline
             readonly RectangleF[] keys;
             readonly float keyRadius;
-            readonly RectangleF space;                                // space bar, round ends
+            readonly RectangleF space;                                // the space bar, with rounded ends
             readonly bool badged, dropSpace;
-            readonly float cx, cy, badgeRadius, cutRadius;            // the badge disc, and the transparent ring around it
+            readonly float cx, cy, badgeRadius, cutRadius;            // the circular badge, and the transparent ring around it
             readonly RectangleF bar;                                  // "off": a bar across the badge
             readonly PointF tick0, tick1, tick2;                      // "on": a check mark
             readonly float tickHalf;
@@ -135,24 +142,26 @@ namespace KeyboardToggler.Ui
             public Layout(int n, bool badge)
             {
                 float u = n / 16f;
-                stroke = n < 24 ? 1 : n < 30 ? 1.5f : (float)Math.Floor(u * 2 + 0.25) / 2;   // then about n / 16 in half pixels
+                stroke = n < 24 ? 1 : n < 30 ? 1.5f : (float)Math.Floor(u * 2 + 0.25) / 2;   // for larger dimensions: approximately n / 16, in increments of 1/2 px
                 int pitch = Math.Max(2, Round(3 * u));
                 int key = Math.Max(1, Math.Min(Round(1.5f * u), pitch - 2));
                 int spaceH = Math.Max(1, Round(stroke));
-                int inset = Math.Max(2, Round(stroke + u));            // outline plus margin above and below the keys
+                int inset = Math.Max(2, Round(stroke + u));            // the outline, plus a clearance above and below the keys
                 int bodyH = 2 * pitch + spaceH + 2 * inset;            // two rows of keys, then the space bar
                 left = 0; right = n;
-                // With a badge the keyboard moves up a little, so the badge covers less of it.
+                // If there is a badge, the keyboard moves up a small distance. Thus the badge is on a smaller part of
+                // the keyboard.
                 top = Math.Max(0, (float)Math.Floor((n - bodyH) / 2f) - (badge ? Math.Max(1, n / 10) : 0));
                 bottom = top + bodyH;
                 radius = Math.Max(1, Round(4 * u) / 2f);
 
-                // Row 1 sits a little left and row 2 a little right, like a real keyboard (and the Fluent glyph).
+                // Row 1 moves a small distance to the left and row 2 moves a small distance to the right.
+                // Keyboards and the Fluent glyph have this layout.
                 float y1 = top + inset, mid = n / 2f, shift = Math.Max(0.25f, u / 4);
                 var all = new RectangleF[7];
                 for (int i = 0; i < 4; i++) all[i] = new RectangleF(Round(mid + (i - 1.5f) * pitch - shift - key / 2f), y1, key, key);
                 int stagger = Round(mid - pitch + shift - key / 2f) - (int)all[0].X;
-                if (stagger % pitch == 0) stagger--;                     // tiny sizes: keep row 2 between row 1's keys
+                if (stagger % pitch == 0) stagger--;                     // for very small dimensions: keep the keys of row 2 between the keys of row 1
                 for (int i = 0; i < 3; i++) all[4 + i] = new RectangleF(all[0].X + stagger + i * pitch, y1 + pitch, key, key);
                 keyRadius = key >= 4 ? key / 4f : 0;
 
@@ -163,16 +172,18 @@ namespace KeyboardToggler.Ui
                 badged = badge;
                 if (!badge) { keys = all; return; }
 
-                // A disc half the size of the box in the corner, its edges on whole pixels, with a ring of about
-                // 1/20 of the box (at least 1 px) cut out of the keyboard around it.
+                // The badge is circular and is in the corner. Its diameter is approximately 1/2 of n, and its edges
+                // align with the pixel grid. Around the badge, a ring cuts the keyboard. The width of the ring is
+                // 1/20 of n (minimum 1 px).
                 int d = n / 4 * 2;
                 badgeRadius = d / 2f;
                 cx = cy = n - badgeRadius;
                 float ring = Math.Max(1, n / 20f);
                 cutRadius = badgeRadius + ring;
 
-                // Keys are never cut in pieces: a key may reach into the ring as long as it keeps half the ring
-                // away from the badge, otherwise it goes. The space bar goes too if only a stub of it would be left.
+                // The ring does not cut keys into pieces. A part of a key can be in the ring if the distance from
+                // the key to the badge is 1/2 of the width of the ring or more. If not, the code removes the key.
+                // The code also removes the space bar if only a short part of it stays.
                 var kept = new List<RectangleF>();
                 foreach (var k in all)
                     if (Clearance(k) - badgeRadius >= ring / 2) kept.Add(k);
@@ -181,8 +192,9 @@ namespace KeyboardToggler.Ui
                 float reach = Math.Abs(dy) < cutRadius ? cx - (float)Math.Sqrt(cutRadius * cutRadius - dy * dy) : space.Right;
                 dropSpace = Math.Min(space.Right, reach) - space.Left < 2 * space.Height;
 
-                // The marks, in white: a bar about half as wide as the badge and a fifth as tall (on whole
-                // pixels), or a check with rounded ends.
+                // The badge has one of two white marks. The width of the bar is approximately 1/2 of the diameter of
+                // the badge. Its height is approximately 1/5 of that diameter. Its edges align with the pixel grid.
+                // The check mark has rounded ends.
                 int w = Round(d * 0.56f), h = Math.Max(1, Round(d * 0.2f));
                 if ((d - w) % 2 != 0) w--;
                 if ((d - h) % 2 != 0) h = h > 1 ? h - 1 : h + 1;
@@ -196,14 +208,15 @@ namespace KeyboardToggler.Ui
 
             static int Round(float v) { return (int)Math.Floor(v + 0.5f); }
 
-            // Distance from the badge's centre to the nearest point of key k.
+            // This method gives the distance from the center of the badge to the nearest point of key k.
             float Clearance(RectangleF k)
             {
                 float dx = Math.Max(0, Math.Max(k.Left - cx, cx - k.Right)), dy = Math.Max(0, Math.Max(k.Top - cy, cy - k.Bottom));
                 return (float)Math.Sqrt(dx * dx + dy * dy);
             }
 
-            // The outline and the space bar, cut by the ring, then the keys whole.
+            // This method gives the signed distance to the keyboard. It uses the outline and the space bar without
+            // the area of the ring. Then it adds the keys, which the ring does not cut.
             public float Keyboard(float x, float y)
             {
                 float d = Math.Max(RoundRect(x, y, left, top, right, bottom, radius),
@@ -226,7 +239,7 @@ namespace KeyboardToggler.Ui
                 return (float)Math.Sqrt(dx * dx + dy * dy);
             }
 
-            // Distance to the segment a-b.
+            // This method gives the distance to the line segment a-b.
             static float Segment(float x, float y, PointF a, PointF b)
             {
                 float vx = b.X - a.X, vy = b.Y - a.Y;

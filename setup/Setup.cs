@@ -1,6 +1,6 @@
-﻿// Keyboard Toggler installer / uninstaller. The app files are embedded as resources.
-//   KeyboardToggler-Setup.exe              -> install wizard
-//   Uninstall.exe /uninstall               -> remove app + Interception driver (copied into the install folder)
+﻿// Setup for Keyboard Toggler: it installs and removes the app. The app files are resources in this exe file.
+//   KeyboardToggler-Setup.exe              -> the install wizard
+//   Uninstall.exe /uninstall               -> removes the app and the Interception driver (Setup copies this exe into the install folder)
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -31,15 +31,15 @@ namespace KeyboardTogglerSetup
         public static readonly string Shortcut = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonPrograms), "Keyboard Toggler.lnk");
         static readonly string[] Payload = { "KeyboardToggler.exe", "interception.dll", "install-interception.exe", "Interception-LGPL-3.0.txt" };
 
-        public const string ArmMessage = "Keyboard Toggler can't be installed on Windows on Arm.\n\n" +
-            "The keyboard driver it relies on (Interception) only exists for Intel and AMD (x64) PCs. It can't load on this PC, " +
-            "so after the restart every keyboard and mouse would stop working.";
+        public const string ArmMessage = "You cannot install Keyboard Toggler on Windows on Arm.\n\n" +
+            "Keyboard Toggler uses the Interception driver. This driver is only for Intel and AMD (x64) PCs. Windows cannot load it on this PC. " +
+            "If you install the driver, no keyboard and no mouse will operate after you start Windows again.";
 
         [DllImport("kernel32.dll")] static extern IntPtr GetCurrentProcess();
         [DllImport("kernel32.dll")] static extern bool IsWow64Process2(IntPtr process, out ushort processMachine, out ushort nativeMachine);
 
-        // Windows on Arm runs this x64 setup emulated, and the driver's installer would then register its x64 keyboard and
-        // mouse filters, which an Arm64 Windows can't load.
+        // Windows on Arm operates this x64 Setup in emulation. If Setup installs the driver there, the driver installer adds
+        // x64 keyboard and mouse filters. Arm64 Windows cannot load them.
         public static bool IsArm64()
         {
             try
@@ -47,11 +47,11 @@ namespace KeyboardTogglerSetup
                 ushort process, native;
                 return IsWow64Process2(GetCurrentProcess(), out process, out native) && native == 0xAA64; // IMAGE_FILE_MACHINE_ARM64
             }
-            catch (EntryPointNotFoundException) { return false; }   // Windows 10 before 1709, which can't run x64 apps on Arm anyway
+            catch (EntryPointNotFoundException) { return false; }   // Windows 10 before 1709. It cannot operate x64 apps on Arm.
         }
 
-        // Windows tools are started by full path: given a bare name, Windows looks in the setup's own folder
-        // (e.g. Downloads) first, so a planted schtasks.exe there would run with admin rights.
+        // Setup starts Windows tools with their full path. If Setup gives only a name, Windows first examines the folder of Setup
+        // (for example, Downloads). A dangerous schtasks.exe in that folder can then operate with administrator rights.
         public static string SystemTool(string name) { return Path.Combine(Environment.SystemDirectory, name); }
 
         [STAThread]
@@ -75,7 +75,7 @@ namespace KeyboardTogglerSetup
                 try { p.Kill(); p.WaitForExit(3000); } catch { }
         }
 
-        // Runs install-interception.exe with /install or /uninstall; returns its output.
+        // This method starts install-interception.exe with /install or /uninstall. It gives the output of the tool.
         public static string RunDriverTool(string exe, string arg)
         {
             var psi = new ProcessStartInfo(exe, arg) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
@@ -87,18 +87,18 @@ namespace KeyboardTogglerSetup
             }
         }
 
-        // Returns true when Windows must restart before the driver is active.
+        // This method gives true if it is necessary to start Windows again before the driver is active.
         public static bool Install(bool startWithWindows, Action<string> progress)
         {
             if (IsArm64()) throw new Exception(ArmMessage);
 
-            progress("Closing Keyboard Toggler if it's running...");
+            progress("Setup stops Keyboard Toggler if it operates...");
             StopApp();
 
-            progress("Removing leftovers from older versions...");
+            progress("Setup removes the remaining files of previous versions...");
             RemoveV1();
 
-            progress("Copying files...");
+            progress("Setup copies the files...");
             Directory.CreateDirectory(Dir);
             var asm = Assembly.GetExecutingAssembly();
             foreach (string name in Payload)
@@ -112,16 +112,16 @@ namespace KeyboardTogglerSetup
             bool restart = false;
             if (!DriverInstalled())
             {
-                progress("Installing the Interception keyboard driver...");
+                progress("Setup installs the Interception driver...");
                 string output = RunDriverTool(Path.Combine(Dir, "install-interception.exe"), "/install");
-                if (!DriverInstalled()) throw new Exception("The Interception driver didn't install:\n\n" + output);
+                if (!DriverInstalled()) throw new Exception("Setup cannot install the Interception driver:\n\n" + output);
                 restart = true;
             }
 
-            progress("Creating Start menu shortcut...");
-            CreateShortcut(Shortcut, AppExe, "Switch the laptop keyboard off while using an external keyboard");
+            progress("Setup adds Keyboard Toggler to the Start menu...");
+            CreateShortcut(Shortcut, AppExe, "Deactivate the laptop keyboard while you use an external keyboard");
 
-            progress("Registering with Windows...");
+            progress("Setup adds Keyboard Toggler to Installed apps in Settings...");
             using (var k = Registry.LocalMachine.CreateSubKey(UninstallKey))
             {
                 string uninst = Path.Combine(Dir, "Uninstall.exe");
@@ -138,15 +138,15 @@ namespace KeyboardTogglerSetup
                 k.SetValue("NoRepair", 1, RegistryValueKind.DWord);
             }
 
-            progress("Setting up start at sign-in...");
+            progress("Setup sets Keyboard Toggler to start when you sign in...");
             SetStartup(startWithWindows);
             return restart;
         }
 
         public const string ApprovedKey = @"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run";
 
-        // Same as other apps: a Run-key entry plus its Task Manager "Startup apps" state
-        // (StartupApproved; first byte 02 = enabled, 03 = disabled), so it can be switched in Task Manager.
+        // Setup does the same as other apps. It writes a Run-key entry and its condition in "Startup apps" in Task Manager
+        // (StartupApproved: first byte 02 = on, 03 = off). Thus, you can change it in Task Manager.
         static void SetStartup(bool on)
         {
             using (var run = Registry.CurrentUser.CreateSubKey(RunKey))
@@ -160,8 +160,9 @@ namespace KeyboardTogglerSetup
 
         public static void DeleteLogonTask() { string o; RunHidden(SystemTool("schtasks.exe"), "/delete /f /tn KeyboardToggler", out o); }
 
-        // v1.x (NSIS, device-disable) left: two scheduled tasks, ProgramData state/logs, extra files and shortcuts.
-        // If v1 ever left a keyboard disabled, its state file lists it; switch those back on first.
+        // After v1.x (NSIS, device-disable), these items can stay on the PC: two scheduled tasks, files in ProgramData,
+        // other files and Start menu .lnk files. If v1 deactivated a keyboard, state.json records it.
+        // This method first activates those keyboards again.
         public static void RemoveV1()
         {
             string o;
@@ -175,7 +176,7 @@ namespace KeyboardTogglerSetup
             }
             catch { }
 
-            DeleteLogonTask(); // v1's elevated sign-in task had the same name
+            DeleteLogonTask(); // The elevated sign-in task of v1 had the same name
             RunHidden(SystemTool("schtasks.exe"), "/delete /f /tn \"KeyboardToggler Restore\"", out o);
             try { Directory.Delete(data, true); } catch { }
             foreach (string f in new[] { "Restore-Keyboard.cmd", "tasks.ps1" })
@@ -209,7 +210,7 @@ namespace KeyboardTogglerSetup
             lt.InvokeMember("Save", BindingFlags.InvokeMethod, null, lnk, null);
         }
 
-        // Start the app as the signed-in user (not elevated): explorer.exe launches it with normal rights.
+        // This method starts the app as the signed-in user (not elevated). explorer.exe starts it without administrator rights.
         public static void LaunchApp()
         {
             Process.Start(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "explorer.exe"), "\"" + AppExe + "\"");
@@ -220,18 +221,19 @@ namespace KeyboardTogglerSetup
         public static Icon AppIcon() { return Icon.ExtractAssociatedIcon(Application.ExecutablePath); }
     }
 
-    // The install wizard: one window whose content follows the stage. Install runs on a background thread and reports
-    // progress through BeginInvoke; the window can't be closed while it works. Designed at 96 DPI, scaled with Theme.S.
+    // This class is the install wizard. It has one window, and the content of the window changes with the Stage. Install operates on a
+    // background thread and sends the progress text to the window through BeginInvoke. You cannot close the window while Install operates.
+    // The dimensions are for 96 DPI. Theme.S changes them for other DPI values.
     sealed class InstallForm : FluentForm
     {
-        // Error: Install threw ("Try again" runs it again). Arm: Windows on Arm, which can't be installed on.
+        // Error: an exception occurred in Install ("Try again" starts it again). Arm: Windows on Arm. You cannot install Keyboard Toggler on it.
         enum Stage { Welcome, Working, DoneRestart, Done, Error, Arm }
         Stage stage = Stage.Welcome;
         bool upgrade, statusGlyph;
-        FluentCheckBox option;   // the check box under the text, if the stage has one
-        int contentHeight;       // grows but never shrinks, so the buttons stay put from stage to stage
+        FluentCheckBox option;   // the check box below the text, if the Stage has one
+        int contentHeight;       // it can increase but it cannot decrease, so the buttons stay in the same position at each Stage
 
-        const string SuccessGlyph = "\uE930";   // "Completed": a check mark in a circle, like Glyph.Error's crossed circle
+        const string SuccessGlyph = "\uE930";   // "Completed": a check mark in a circle. Glyph.Error is an X in a circle.
 
         readonly ThemedPanel content = new ThemedPanel { Surface = Surface.Layer, TabIndex = 0 };
         readonly ThemedPanel commands = new ThemedPanel { Surface = Surface.Background, TopDivider = true, TabIndex = 1 };
@@ -241,8 +243,8 @@ namespace KeyboardTogglerSetup
         readonly GlyphIcon statusIcon = new GlyphIcon { Points = 12f };
         readonly TextBlock heading = new TextBlock { Font = Theme.BodyStrong };
         readonly List<TextBlock> paragraphs = new List<TextBlock>();
-        readonly FluentCheckBox startup = new FluentCheckBox { Text = "Start Keyboard Toggler when I sign in", Checked = true };
-        readonly FluentCheckBox launch = new FluentCheckBox { Text = "Open Keyboard Toggler now", Checked = true };
+        readonly FluentCheckBox startup = new FluentCheckBox { Text = "Start Keyboard Toggler when you sign in", Checked = true };
+        readonly FluentCheckBox launch = new FluentCheckBox { Text = "Open Keyboard Toggler", Checked = true };
         readonly FluentProgress bar = new FluentProgress();
         readonly FluentButton primary = new FluentButton { Accent = true, TabIndex = 0 };
         readonly FluentButton secondary = new FluentButton { TabIndex = 1 };
@@ -295,7 +297,7 @@ namespace KeyboardTogglerSetup
         protected override void OnLoad(EventArgs e)
         {
             base.OnLoad(e);
-            ActiveControl = (Control)AcceptButton;   // start on the main button, like a standard dialog
+            ActiveControl = (Control)AcceptButton;   // focus starts on the primary button, the same as in a standard dialog
         }
 
         void StartInstall()
@@ -318,18 +320,18 @@ namespace KeyboardTogglerSetup
             t.Start();
         }
 
-        // ---- Stages (UI only) ----
+        // ---- Stage methods (UI only) ----
 
         void ShowWelcome(bool upgrade, bool restartNote)
         {
             stage = Stage.Welcome;
             this.upgrade = upgrade;
             SetStatus(null, TextRole.Primary, "", TextRole.Primary);
-            SetText(TextRole.Primary, (upgrade ? "Keyboard Toggler is already installed. Setup will update it.\n\n" : "") +
-                "Left-click the tray icon to switch the built-in keyboard off or on. Your external keyboard always keeps working.\n\n" +
-                "Setup installs it to " + Setup.Dir + " and adds the Interception keyboard driver (free, LGPL), " +
-                "which lets it block only the laptop keyboard." +
-                (restartNote ? "\n\nWindows needs one restart after installing the driver." : ""));
+            SetText(TextRole.Primary, (upgrade ? "Keyboard Toggler is installed on this PC. Setup will update it.\n\n" : "") +
+                "Click the tray icon to deactivate or activate the laptop keyboard. Your external keyboard always stays on.\n\n" +
+                "Setup installs Keyboard Toggler in " + Setup.Dir + " and adds the Interception driver (open source, LGPL). " +
+                "This driver lets Keyboard Toggler deactivate only the laptop keyboard." +
+                (restartNote ? "\n\nAfter Setup installs the driver, you must start Windows again." : ""));
             option = startup;
             SetCommands("Install", "Cancel");
         }
@@ -337,7 +339,7 @@ namespace KeyboardTogglerSetup
         void ShowWorking()
         {
             stage = Stage.Working;
-            SetStatus(null, TextRole.Primary, upgrade ? "Updating Keyboard Toggler" : "Installing Keyboard Toggler", TextRole.Primary);
+            SetStatus(null, TextRole.Primary, upgrade ? "Setup updates Keyboard Toggler" : "Setup installs Keyboard Toggler", TextRole.Primary);
             SetText(TextRole.Secondary, "");
             option = null;
             primary.Enabled = secondary.Enabled = false;
@@ -356,25 +358,25 @@ namespace KeyboardTogglerSetup
             if (restart)
             {
                 stage = Stage.DoneRestart;
-                SetText(TextRole.Primary, "Restart Windows to load the keyboard driver. After you sign in, Keyboard Toggler appears in the tray " +
-                    "(click the ^ arrow next to the clock if you don't see it).\n\nYou can also open it from the Start menu.");
+                SetText(TextRole.Primary, "Start Windows again to load the Interception driver. After you sign in, the Keyboard Toggler icon shows in the tray. " +
+                    "If you do not see it, click the ^ arrow near the clock.\n\nYou can also open Keyboard Toggler from the Start menu.");
                 option = null;
-                SetCommands("Restart now", "Restart later");
+                SetCommands("Start Windows again", "Close");
             }
             else
             {
                 stage = Stage.Done;
-                SetText(TextRole.Primary, "It lives in the tray: click the ^ arrow next to the clock if you don't see it. " +
-                    "You can also open it from the Start menu.");
+                SetText(TextRole.Primary, "Keyboard Toggler is in the tray. If you do not see its icon, click the ^ arrow near the clock. " +
+                    "You can also open Keyboard Toggler from the Start menu.");
                 option = launch;
-                SetCommands("Finish", "Close");
+                SetCommands("Complete", "Close");
             }
         }
 
         void ShowError(string message)
         {
             stage = Stage.Error;
-            SetStatus(Glyph.Error, TextRole.Critical, "Setup couldn't finish", TextRole.Critical);
+            SetStatus(Glyph.Error, TextRole.Critical, "Setup cannot complete the installation", TextRole.Critical);
             SetText(TextRole.Primary, message);
             option = null;
             SetCommands("Try again", "Cancel");
@@ -383,7 +385,7 @@ namespace KeyboardTogglerSetup
         void ShowArm()
         {
             stage = Stage.Arm;
-            // The message's first paragraph is its headline.
+            // The first paragraph of the message is the heading.
             string[] parts = Setup.ArmMessage.Split(new[] { "\n\n" }, 2, StringSplitOptions.None);
             SetStatus(Glyph.Warning, TextRole.Caution, parts[0].TrimEnd('.'), TextRole.Primary);
             SetText(TextRole.Primary, parts.Length > 1 ? parts[1] : "");
@@ -391,9 +393,9 @@ namespace KeyboardTogglerSetup
             SetCommands(null, "Close");
         }
 
-        // ---- Building blocks ----
+        // ---- Parts of the UI ----
 
-        // A headline under the app's name, with an optional glyph before it (null = none, empty text = no headline).
+        // This method sets the heading below the app name. An optional glyph can be before the heading (null = no glyph, empty text = no heading).
         void SetStatus(string glyph, TextRole glyphRole, string text, TextRole textRole)
         {
             statusGlyph = glyph != null;
@@ -402,7 +404,7 @@ namespace KeyboardTogglerSetup
             heading.Role = textRole;
         }
 
-        // The body text; blank lines start a new paragraph.
+        // This method sets the body text. Each "\n\n" starts a new paragraph.
         void SetText(TextRole role, string text)
         {
             string[] parts = text.Replace("\r\n", "\n").Trim('\n').Split(new[] { "\n\n" }, StringSplitOptions.RemoveEmptyEntries);
@@ -427,7 +429,7 @@ namespace KeyboardTogglerSetup
             }
         }
 
-        // The buttons, right-aligned: first is the main (accent) one; without it, second becomes the main one.
+        // This method sets the buttons at the right side. first is the primary (accent) button. If first is null, second becomes the primary button.
         void SetCommands(string first, string second)
         {
             primary.Visible = first != null;
@@ -445,7 +447,7 @@ namespace KeyboardTogglerSetup
             int pad = Theme.S(24), width = Theme.S(520), inner = width - 2 * pad;
             content.SuspendLayout();
 
-            // Header: the app icon with the name and version beside it.
+            // Header: the app icon, with the name and the version adjacent to it.
             logo.Bounds = new Rectangle(pad, pad, Theme.S(48), Theme.S(48));
             int tx = logo.Right + Theme.S(16);
             title.Width = version.Width = width - tx - pad;
@@ -480,7 +482,7 @@ namespace KeyboardTogglerSetup
             bar.Indeterminate = stage == Stage.Working;
             if (option != null)
             {
-                // The box is drawn 2 px in from the control's edge (room for the focus ring): line it up with the text.
+                // The box is 2 px from the edge of the control. This gives space for the focus ring. Align the box with the text.
                 int w = Theme.S(34) + TextRenderer.MeasureText(option.Text, option.Font, Size.Empty, TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix).Width;
                 option.Bounds = new Rectangle(pad - Theme.S(2), y, w, Theme.S(32));
                 y = option.Bottom;
@@ -496,7 +498,7 @@ namespace KeyboardTogglerSetup
             content.Bounds = new Rectangle(0, 0, width, contentHeight);
             content.ResumeLayout(false);
 
-            // Command area: equal-width buttons, right-aligned.
+            // Command area: buttons with equal width, aligned on the right side.
             int bw = Math.Max(Theme.S(120), Math.Max(primary.PreferredWidth(0), secondary.PreferredWidth(0))), bh = Theme.S(32);
             commands.Bounds = new Rectangle(0, contentHeight, width, pad + bh + pad);
             secondary.Bounds = new Rectangle(width - pad - bw, pad, bw, bh);
@@ -508,7 +510,7 @@ namespace KeyboardTogglerSetup
                 ClientSize = size;
                 if (IsHandleCreated)
                 {
-                    // Grown past the bottom of the screen? Move up.
+                    // If the window goes below the bottom of the screen, move it up.
                     Rectangle area = Screen.FromHandle(Handle).WorkingArea;
                     if (Bottom > area.Bottom && Top >= area.Top) Top = Math.Max(area.Top, area.Bottom - Height);
                 }
@@ -516,7 +518,7 @@ namespace KeyboardTogglerSetup
             UpdateCloseBox();
         }
 
-        // Greys out the title bar's close button while Setup works (closing is blocked then anyway).
+        // This method deactivates the close button on the title bar while Setup operates. At that time, you also cannot close the window, because OnFormClosing cancels it.
         void UpdateCloseBox()
         {
             if (IsHandleCreated) EnableMenuItem(GetSystemMenu(Handle, false), 0xF060 /*SC_CLOSE*/, stage == Stage.Working ? 1u /*MF_GRAYED*/ : 0u);
@@ -526,8 +528,9 @@ namespace KeyboardTogglerSetup
         [DllImport("user32.dll")] static extern int EnableMenuItem(IntPtr menu, uint item, uint flags);
     }
 
-    // The app's own icon, sharp at any size: Windows picks the closest image in the exe's icon (Setup.AppIcon() only
-    // gives the 32 px system size). Paints over its parent's colour, like the UI kit's controls.
+    // This control shows the icon of the app at the correct dimension. Windows selects the applicable image in the icon of the exe file
+    // (Setup.AppIcon() gives only the 32 px system dimension). OnPaint first fills the area with the color of the parent,
+    // the same as the controls in the UI kit.
     sealed class AppIconView : Control
     {
         Icon icon;
@@ -587,7 +590,7 @@ namespace KeyboardTogglerSetup
             bool quiet = args.Any(a => a.Equals("/quiet", StringComparison.OrdinalIgnoreCase));
             string self = Application.ExecutablePath;
 
-            // Can't delete the install folder while running from it: hand off to a temp copy.
+            // This exe cannot delete the install folder while it operates from that folder. Thus, it starts a temporary copy of the exe.
             if (self.StartsWith(Setup.Dir, StringComparison.OrdinalIgnoreCase))
             {
                 string tmp = Path.Combine(Path.GetTempPath(), "KeyboardToggler-Uninstall.exe");
@@ -596,8 +599,8 @@ namespace KeyboardTogglerSetup
                 return;
             }
 
-            if (!quiet && Notice.Show(null, NoticeKind.Question, "Remove Keyboard Toggler?",
-                    "This removes the app and its Interception keyboard driver.", "Remove", "Cancel") != 0)
+            if (!quiet && Notice.Show(null, NoticeKind.Question, "Do you want to remove Keyboard Toggler?",
+                    "This removes Keyboard Toggler and the Interception driver.", "Remove", "Cancel") != 0)
                 return;
 
             Setup.StopApp();
@@ -621,19 +624,19 @@ namespace KeyboardTogglerSetup
             }
             try { Directory.Delete(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "KeyboardToggler"), true); } catch { }
 
-            // Delete this temp copy once we've exited.
-            // cmd looks for "ping" in its working folder first, so run it from System32.
+            // Delete this temporary copy after this exe stops.
+            // cmd first examines its working folder for "ping". Thus, start cmd in System32.
             Process.Start(new ProcessStartInfo(Setup.SystemTool("cmd.exe"), "/c ping -n 3 127.0.0.1 >nul & del \"" + self + "\"")
                 { CreateNoWindow = true, UseShellExecute = false, WorkingDirectory = Environment.SystemDirectory });
 
             if (quiet) return;
             if (driverRemoved)
             {
-                if (Notice.Show(null, NoticeKind.Info, "Keyboard Toggler has been removed",
-                        "Restart Windows to finish removing the keyboard driver.", "Restart now", "Later") == 0)
+                if (Notice.Show(null, NoticeKind.Info, "Keyboard Toggler is removed",
+                        "Start Windows again to complete the removal of the Interception driver.", "Start Windows again", "Close") == 0)
                     Setup.RestartWindows();
             }
-            else Notice.Show(null, NoticeKind.Info, "Keyboard Toggler has been removed", "You don't need to restart Windows.", "OK");
+            else Notice.Show(null, NoticeKind.Info, "Keyboard Toggler is removed", "It is not necessary to start Windows again.", "OK");
         }
     }
 }
